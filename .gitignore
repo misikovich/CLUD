@@ -1,0 +1,10 @@
+# Build output (1+ GB) and download cache - recreated by build-clud.ps1
+/CLUD/
+/.downloads/
+
+# Never commit a live config: it holds the login (.credentials.json) and account info
+.credentials.json
+.claude.json
+
+# Preview renders
+*.png

@@ -1,0 +1,7 @@
+[autorun]
+label=CLUD
+icon=clud.ico
+action=Launch CLUD (Claude Code)
+open=CLUD.exe
+shell\clud=Launch CLUD
+shell\clud\command=CLUD.exe
