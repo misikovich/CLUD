@@ -3,7 +3,9 @@
 ## Where you are
 - You are **not installed on this computer**. You run from a removable drive (label `CLUD`).
   The drive root is in the env var `CLUD_HOME` (e.g. `E:\`). Your binaries, settings,
-  memory and login live there, under `node\`, `git\`, `app\` and `config\`.
+  memory and login live there, under `app\`, `git\`, `py\` and `config\`.
+- Tools on the stick, already on your PATH: `git`, Git Bash, and Python 3.13 (`python`).
+  Use them when the host lacks its own. There is no Node.js on the stick.
 - The machine you are plugged into (the **host PC**) is the thing you work on. It is
   likely a different PC every time: never assume software, paths, users or settings
   from a previous session still apply. At the start of a task, check what you're on

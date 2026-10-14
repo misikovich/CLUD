@@ -1,5 +1,5 @@
 # Draws the CLUD icon and writes a multi-size .ico (PNG entries, Vista+).
-param([string]$Out = (Join-Path $PSScriptRoot '..\src\clud.ico'))
+param([string]$Out = (Join-Path $PSScriptRoot '..\stick\clud.ico'))
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing

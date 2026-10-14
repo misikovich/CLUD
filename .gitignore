@@ -1,4 +1,9 @@
-# Build output (1+ GB) and download cache - recreated by build-clud.ps1
+# Installer tooling (uv, its Python, Textual) and download cache - fetched on first run
+/.tools/
+/.cache/
+__pycache__/
+
+# Old build-script output
 /CLUD/
 /.downloads/
 

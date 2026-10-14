@@ -5,5 +5,11 @@
 *.inf text eol=crlf
 *.cs  text eol=crlf
 *.txt text eol=crlf
-*.md  text eol=crlf
+
+# ...and the macOS/Linux launcher must keep LF, or sh chokes on the \r
+*.sh  text eol=lf
+*.py  text eol=lf
+*.md  text eol=lf
+
 *.ico binary
+*.exe binary
