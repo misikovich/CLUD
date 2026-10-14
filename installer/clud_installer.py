@@ -19,6 +19,7 @@ Without arguments it opens the TUI. For scripting:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 import traceback
@@ -86,6 +87,31 @@ def run_cli(args: argparse.Namespace) -> int:
 
 # --- TUI --------------------------------------------------------------------------------
 
+def legacy_console() -> bool:
+    """True in the classic Windows console window. Its usual fonts (Lucida Console, raster)
+    lack the block and line characters Textual draws borders, bars and scrollbars with,
+    which then show up as boxes. CLUD_SIMPLE_GLYPHS=1/0 forces it either way."""
+    forced = os.environ.get("CLUD_SIMPLE_GLYPHS")
+    if forced is not None:
+        return forced == "1"
+    if os.name != "nt":
+        return False
+    modern = ("WT_SESSION", "TERM_PROGRAM", "ConEmuANSI", "WEZTERM_PANE", "ALACRITTY_WINDOW_ID")
+    return not any(name in os.environ for name in modern)
+
+
+# Drawn instead of Textual's default look when legacy_console(): no eighth-block borders
+SIMPLE_CSS = """
+Button, Button:focus, Button:hover, Button.-active, Button:disabled {
+    border: none !important; height: 1; min-width: 12; margin-right: 2;
+}
+Checkbox, Checkbox:focus, Checkbox:hover { border: none !important; padding: 0 1; }
+Checkbox:focus { text-style: reverse; }
+#log { border: solid $panel; }
+FooterKey.-command-palette { border-left: outer $foreground 20%; }
+"""
+
+
 def run_tui(show_all: bool) -> int:
     from textual import work
     from textual.app import App, ComposeResult
@@ -96,9 +122,19 @@ def run_tui(show_all: bool) -> int:
     from textual.screen import Screen
     from textual.widgets import Button, Checkbox, DataTable, Footer, Header, ProgressBar, RichLog, Static
 
+    simple = legacy_console()
+    if simple:
+        from textual.renderables.bar import Bar as BarRenderable
+        from textual.scrollbar import ScrollBarRender
+
+        BarRenderable.BAR = BarRenderable.HALF_BAR_LEFT = BarRenderable.HALF_BAR_RIGHT = "─"
+        ScrollBarRender.VERTICAL_BARS = [" "] * 8
+        ScrollBarRender.HORIZONTAL_BARS = [" "] * 8
+    header_icon = "C" if simple else None
+
     class DriveScreen(Screen):
         BINDINGS = [
-            Binding("enter", "choose", "Install here", show=True, priority=True),
+            Binding("enter", "choose", "Install here", show=True, priority=True, key_display="Enter"),
             Binding("a", "toggle_all", "Show all drives"),
             Binding("r", "refresh", "Refresh"),
             Binding("q", "app.quit", "Quit"),
@@ -110,7 +146,7 @@ def run_tui(show_all: bool) -> int:
             self.drives: dict[str, core.Drive] = {}
 
         def compose(self) -> ComposeResult:
-            yield Header()
+            yield Header(icon=header_icon)
             yield Static(f"[{ACCENT}]{BANNER}[/]", id="banner")
             yield Static("Portable Claude Code for any Windows PC. Pick the drive to install it on.",
                          id="tagline")
@@ -187,7 +223,7 @@ def run_tui(show_all: bool) -> int:
         def compose(self) -> ComposeResult:
             d = self.drive
             action = "Update CLUD on" if d.has_clud else "Install CLUD on"
-            yield Header()
+            yield Header(icon=header_icon)
             with Vertical(id="confirm-box"):
                 yield Static(Content.from_markup("[b]$action $mount[/b]  $label", action=action, mount=str(d.mount),
                                                  label=d.label), id="title")
@@ -268,7 +304,7 @@ def run_tui(show_all: bool) -> int:
             self.finished = False
 
         def compose(self) -> ComposeResult:
-            yield Header()
+            yield Header(icon=header_icon)
             with Vertical(id="install-box"):
                 yield Static(Content.from_markup("Installing CLUD on [b]$mount[/b]", mount=str(self.drive.mount)),
                              id="title")
@@ -340,7 +376,7 @@ def run_tui(show_all: bool) -> int:
 
     class CludInstaller(App):
         TITLE = "CLUD Installer"
-        SUB_TITLE = "portable Claude Code"
+        SUB_TITLE = "Claude + Chud = CLUD"
         CSS = f"""
         Screen {{ align-horizontal: center; }}
         #banner {{ color: {ACCENT}; text-style: bold; width: auto; margin: 1 0 0 0; }}
@@ -358,7 +394,7 @@ def run_tui(show_all: bool) -> int:
         #log {{ height: 1fr; border: round $panel; }}
         #result {{ margin-top: 1; }}
         ProgressBar Bar > .bar--bar, ProgressBar Bar > .bar--complete {{ color: {ACCENT}; }}
-        """
+        """ + (SIMPLE_CSS if simple else "")
 
         def on_mount(self) -> None:
             self.push_screen(DriveScreen())

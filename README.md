@@ -1,5 +1,8 @@
 # CLUD
 
+### Tired of your friends, grandma or other low-tier computer users always getting in trouble with their Windonws PC? 
+### **CLUD (Claude + Chud)** - is the solution!
+###
 **Portable Claude Code on a USB stick.** Build the stick once, from Windows, macOS or Linux.
 Then plug it into any Windows PC, double-click `CLUD.exe`, and Claude works on that PC:
 through the shell, and through the mouse, keyboard and screen. Nothing is installed on the
@@ -13,7 +16,9 @@ host, and your login, settings and memory travel with the stick.
 
 1. **Get this repo** on any computer with internet access (`git clone`, or download the ZIP).
 2. **Start the CLUD Installer:**
-   - **Windows:** double-click `CLUD-Installer.bat`
+   - **Windows:** double-click `CLUD-Installer.bat`. It opens the installer in Windows Terminal,
+     or in a PowerShell window if Windows Terminal isn't installed. You can also run
+     `CLUD-Installer.ps1` directly.
    - **macOS / Linux:** run `./CLUD-Installer.sh` in a terminal
 3. **Pick your USB drive and press Install.** About 900 MB gets downloaded and written.
 4. **On any Windows PC:** plug the stick in and double-click **`CLUD.exe`**. The first time,
@@ -75,6 +80,10 @@ CLUD-Installer.bat --target E:\ --yes --no-rename
 On macOS/Linux, use the same options with `./CLUD-Installer.sh`. `--target` also accepts a
 plain folder, which is handy for testing or for building a ZIP.
 
+In the classic Windows console window, whose fonts lack some of the characters the TUI draws,
+the installer switches to a simpler look on its own. Set `CLUD_SIMPLE_GLYPHS=1` or `0` to
+force it either way.
+
 ## Requirements
 
 - **To run CLUD:** a 64-bit Windows 10 or 11 PC.
@@ -91,7 +100,8 @@ Windows admin (UAC) prompts, so Claude asks you to click those.
 ## Repo layout
 
 ```
-CLUD-Installer.bat / .sh   start the installer (fetch uv into .tools/, then run it)
+CLUD-Installer.ps1 / .sh   start the installer (fetch uv into .tools/, then run it)
+CLUD-Installer.bat         double-click starter: opens the .ps1 in Windows Terminal
 installer/
   clud_installer.py        the TUI and CLI (Textual)
   clud_core.py             finding drives, downloading, installing; no UI
