@@ -11,5 +11,6 @@ __pycache__/
 .credentials.json
 .claude.json
 
-# Preview renders
+# Preview renders (README images in docs/ are kept)
 *.png
+!/docs/*.png

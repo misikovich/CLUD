@@ -7,6 +7,8 @@ host, and your login, settings and memory travel with the stick.
 
 *(CLUD = Claude + chud.)*
 
+![How CLUD works: create once, carry it, run anywhere](docs/how-it-works.svg)
+
 ## Quick start
 
 1. **Get this repo** on any computer with internet access (`git clone`, or download the ZIP).
@@ -16,6 +18,8 @@ host, and your login, settings and memory travel with the stick.
 3. **Pick your USB drive and press Install.** About 900 MB gets downloaded and written.
 4. **On any Windows PC:** plug the stick in and double-click **`CLUD.exe`**. The first time,
    type `/login` to sign in. The login is saved on the stick.
+
+![The CLUD Installer drive picker](docs/installer.png)
 
 The first time it runs, the installer fetches [uv](https://github.com/astral-sh/uv), and
 through it Python and [Textual](https://github.com/Textualize/textual), into `.tools/` next to

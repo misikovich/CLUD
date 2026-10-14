@@ -346,7 +346,7 @@ def run_tui(show_all: bool) -> int:
         #banner {{ color: {ACCENT}; text-style: bold; width: auto; margin: 1 0 0 0; }}
         #tagline {{ width: auto; margin: 0 0 1 0; color: $text-muted; }}
         #drives {{ height: auto; max-height: 14; width: 100%; max-width: 110; }}
-        #hint {{ margin: 1 2; color: $text-muted; width: 100%; max-width: 110; }}
+        #hint {{ margin: 1 0; color: $text-muted; width: 100%; max-width: 110; }}
         #confirm-box, #install-box {{ width: 100%; max-width: 100; padding: 1 2; height: 1fr; }}
         #title {{ margin-bottom: 1; }}
         .muted {{ color: $text-muted; }}

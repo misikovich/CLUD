@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" width="1200" height="600" role="img" aria-labelledby="t d">
+  <title id="t">How CLUD works: create once, carry it, run anywhere</title>
+  <desc id="d">Run the CLUD Installer on Windows, macOS or Linux and pick a USB drive. The stick then holds Claude Code, Git, Python with Windows-MCP, and your login. Plug it into any Windows PC and double-click CLUD.exe: Claude works on that PC through the shell and the mouse and keyboard, and nothing is installed.</desc>
+  <defs>
+    <style>
+      .sans { font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      .pre { white-space: pre; }
+      .mono { font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; }
+      .card { fill: #1F1E1C; stroke: #34322F; stroke-width: 1.5; }
+      .step { font-size: 13px; font-weight: 700; letter-spacing: 2.2px; fill: #D97757; }
+      .head { font-size: 26px; font-weight: 700; fill: #F5F4EF; }
+      .cap { font-size: 15px; fill: #B8B5AD; }
+      .chip { fill: #2A2926; stroke: #403E3A; stroke-width: 1; }
+      .chiptext { font-size: 12.5px; fill: #E8E6DF; }
+      .screen { fill: #0D0D0C; stroke: #403E3A; stroke-width: 1.5; }
+    </style>
+    <radialGradient id="glow" cx="50%" cy="45%" r="60%">
+      <stop offset="0" stop-color="#D97757" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#D97757" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#181816"/>
+      <stop offset="1" stop-color="#121211"/>
+    </linearGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#2B2A27"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#D97757"/>
+    </marker>
+    <g id="monitor">
+      <rect x="0" y="0" width="150" height="96" rx="8" fill="#2A2926" stroke="#4A4743" stroke-width="1.5"/>
+      <rect x="7" y="7" width="136" height="76" rx="3" fill="#0D0D0C"/>
+      <path d="M62,96 L58,112 L92,112 L88,96 z" fill="#3A3835"/>
+      <rect x="44" y="111" width="62" height="5" rx="2.5" fill="#3A3835"/>
+    </g>
+  </defs>
+
+  <!-- background -->
+  <rect width="1200" height="600" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="600" rx="24" fill="url(#dots)"/>
+
+  <!-- title -->
+  <text x="600" y="62" text-anchor="middle" class="sans" font-size="34" font-weight="800" fill="#F5F4EF">Create once. <tspan fill="#D97757">Run anywhere.</tspan></text>
+  <text x="600" y="92" text-anchor="middle" class="sans" font-size="16" fill="#8F8C84">Portable Claude Code on a USB stick, built from any OS and run on any Windows PC</text>
+
+  <!-- ============ 1. CREATE ONCE ============ -->
+  <rect x="40" y="124" width="336" height="436" rx="20" class="card"/>
+  <text x="68" y="160" class="sans step">1 · CREATE ONCE</text>
+  <text x="68" y="192" class="sans head">Run the installer</text>
+
+  <!-- terminal -->
+  <rect x="68" y="214" width="280" height="176" rx="10" class="screen"/>
+  <circle cx="84" cy="230" r="4.5" fill="#FF5F57"/>
+  <circle cx="99" cy="230" r="4.5" fill="#FEBC2E"/>
+  <circle cx="114" cy="230" r="4.5" fill="#28C840"/>
+  <text x="208" y="234" text-anchor="middle" class="sans" font-size="11.5" fill="#8F8C84">CLUD Installer</text>
+  <text x="84" y="278" class="mono" font-size="34" font-weight="900" fill="#D97757" letter-spacing="2">CLUD</text>
+  <text x="84" y="300" class="mono" font-size="10.5" fill="#8F8C84">Pick the drive to install it on.</text>
+  <rect x="78" y="314" width="260" height="22" rx="3" fill="#D97757" fill-opacity="0.9"/>
+  <text x="86" y="329" xml:space="preserve" class="mono pre" font-size="11.5" font-weight="700" fill="#141413">E:\  CLUD    14.5 GB  USB</text>
+  <text x="86" y="353" xml:space="preserve" class="mono pre" font-size="11.5" fill="#B8B5AD">F:\  KINGSTON 28.9 GB  USB</text>
+  <text x="86" y="378" xml:space="preserve" class="mono pre" font-size="10.5" fill="#6F6C66">⏎ install   a all drives   q quit</text>
+
+  <!-- OS chips -->
+  <rect x="68" y="406" width="84" height="26" rx="13" class="chip"/>
+  <text x="110" y="423.5" text-anchor="middle" class="sans chiptext">Windows</text>
+  <rect x="166" y="406" width="76" height="26" rx="13" class="chip"/>
+  <text x="204" y="423.5" text-anchor="middle" class="sans chiptext">macOS</text>
+  <rect x="256" y="406" width="68" height="26" rx="13" class="chip"/>
+  <text x="290" y="423.5" text-anchor="middle" class="sans chiptext">Linux</text>
+
+  <text x="68" y="470" class="sans cap">On any computer, start the installer</text>
+  <text x="68" y="492" class="sans cap">and pick a USB drive. It downloads</text>
+  <text x="68" y="514" class="sans cap">and sets up everything else.</text>
+
+  <!-- arrow 1 -> 2 -->
+  <path d="M384,310 C404,310 404,310 424,310" stroke="#D97757" stroke-width="2.5" fill="none" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+
+  <!-- ============ 2. CARRY IT ============ -->
+  <rect x="432" y="124" width="336" height="436" rx="20" class="card"/>
+  <ellipse cx="600" cy="292" rx="170" ry="110" fill="url(#glow)"/>
+  <text x="460" y="160" class="sans step">2 · CARRY IT</text>
+  <text x="460" y="192" class="sans head">One stick, all of it</text>
+
+  <!-- USB stick -->
+  <g transform="translate(600 290) rotate(-12)">
+    <rect x="-150" y="-30" width="46" height="60" rx="5" fill="#A9A69F"/>
+    <rect x="-140" y="-16" width="12" height="10" rx="1.5" fill="#6F6C66"/>
+    <rect x="-140" y="6" width="12" height="10" rx="1.5" fill="#6F6C66"/>
+    <rect x="-108" y="-46" width="250" height="92" rx="22" fill="#262522" stroke="#D97757" stroke-width="2.5"/>
+    <rect x="-88" y="-28" width="56" height="56" rx="13" fill="#D97757"/>
+    <text x="-60" y="14" text-anchor="middle" class="sans" font-size="38" font-weight="900" fill="#FFFFFF">C</text>
+    <text x="-14" y="13" class="sans" font-size="36" font-weight="800" fill="#F5F4EF" letter-spacing="3">CLUD</text>
+    <circle cx="124" cy="0" r="7" fill="none" stroke="#4A4743" stroke-width="2"/>
+  </g>
+
+  <!-- contents chips -->
+  <rect x="460" y="384" width="124" height="26" rx="13" class="chip"/>
+  <text x="522" y="401.5" text-anchor="middle" class="sans chiptext">Claude Code</text>
+  <rect x="596" y="384" width="144" height="26" rx="13" class="chip"/>
+  <text x="668" y="401.5" text-anchor="middle" class="sans chiptext">Git + bash</text>
+  <rect x="460" y="418" width="168" height="26" rx="13" class="chip"/>
+  <text x="544" y="435.5" text-anchor="middle" class="sans chiptext">Python + Windows-MCP</text>
+  <rect x="640" y="418" width="100" height="26" rx="13" class="chip" stroke="#D97757"/>
+  <text x="690" y="435.5" text-anchor="middle" class="sans chiptext">your login</text>
+
+  <text x="460" y="470" class="sans cap">About 850 MB. Your login, settings,</text>
+  <text x="460" y="492" class="sans cap">memory and Claude's brief travel</text>
+  <text x="460" y="514" class="sans cap">with the stick.</text>
+
+  <!-- arrow 2 -> 3 -->
+  <path d="M776,310 C796,310 796,310 816,310" stroke="#D97757" stroke-width="2.5" fill="none" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+
+  <!-- ============ 3. RUN ANYWHERE ============ -->
+  <rect x="824" y="124" width="336" height="436" rx="20" class="card"/>
+  <text x="852" y="160" class="sans step">3 · RUN ANYWHERE</text>
+  <text x="852" y="192" class="sans head">Plug in, double-click</text>
+
+  <!-- back monitors -->
+  <g opacity="0.45"><use href="#monitor" x="858" y="222"/></g>
+  <g opacity="0.7"><use href="#monitor" x="986" y="238"/></g>
+  <!-- front monitor, bigger -->
+  <g transform="translate(886 268) scale(1.28)">
+    <use href="#monitor"/>
+    <!-- Claude Code session on screen -->
+    <text x="14" y="24" class="mono" font-size="7.5" fill="#D97757">✻ CLUD on OFFICE-PC</text>
+    <text x="14" y="38" class="mono" font-size="7" fill="#B8B5AD">&gt; install the printer driver</text>
+    <rect x="14" y="45" width="78" height="6" rx="3" fill="#3A3835"/>
+    <rect x="14" y="45" width="52" height="6" rx="3" fill="#D97757"/>
+    <text x="14" y="66" class="mono" font-size="6.5" fill="#6F6C66">clicking “Next” in the installer…</text>
+    <!-- mouse pointer -->
+    <path d="M110,40 L110,60 L115,55 L119,64 L122,62.5 L118,54 L125,54 z" fill="#FFFFFF" stroke="#141413" stroke-width="1"/>
+  </g>
+
+  <!-- CLUD.exe icon chip -->
+  <g transform="translate(852 412)">
+    <rect width="26" height="26" rx="6" fill="#D97757"/>
+    <text x="13" y="19" text-anchor="middle" class="sans" font-size="17" font-weight="900" fill="#FFFFFF">C</text>
+    <text x="36" y="18" class="mono" font-size="14" fill="#E8E6DF">CLUD.exe</text>
+  </g>
+  <text x="1132" y="430" text-anchor="end" class="sans" font-size="12.5" fill="#8F8C84">shell · mouse · keyboard</text>
+
+  <text x="852" y="470" class="sans cap">On any Windows PC, Claude works</text>
+  <text x="852" y="492" class="sans cap">on that machine through the shell and</text>
+  <text x="852" y="514" class="sans cap">the screen. Nothing gets installed.</text>
+</svg>
