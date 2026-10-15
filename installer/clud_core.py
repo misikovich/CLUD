@@ -46,9 +46,18 @@ STAGING = ".clud-new"
 RETIRED = ".clud-old"
 HIDDEN = ("app", "git", "py", "mcp", "CLUD.cmd", "autorun.inf", "clud.ico", "clud-version.json")
 
-# Docs and man pages in Git for Windows: ~100 MB nobody reads off a USB stick
-GIT_SKIP = ("mingw64/share/doc/", "usr/share/doc/", "usr/share/man/", "usr/share/info/",
-            "mingw64/share/gtk-doc/", "mingw64/doc/")
+# Parts of Git for Windows that Claude never uses: docs, Vim's runtime, timezone data and
+# Tcl/Tk for the gitk / git gui GUIs. Every file written to a stick costs ~20-40 ms (more
+# on macOS), so these ~6,500 small files are minutes of install time. Newer builds use
+# ucrt64\ where older ones had mingw64\.
+GIT_SKIP = ("usr/share/doc/", "usr/share/man/", "usr/share/info/", "usr/share/gtk-doc/",
+            "usr/share/vim/") + tuple(
+    f"{prefix}/{sub}" for prefix in ("mingw64", "ucrt64")
+    for sub in ("share/doc/", "share/gtk-doc/", "doc/", "share/zoneinfo/", "lib/tcl8.6/",
+                "lib/tk8.6/", "share/git-gui/"))
+
+# Same for Python: Tcl/Tk for tkinter, IDLE, demos, and C headers (~1,650 files)
+PY_SKIP = ("tcl/", "include/", "Lib/idlelib/", "Lib/turtledemo/")
 
 _SSL = ssl.create_default_context(cafile=certifi.where())
 
@@ -258,7 +267,7 @@ def _extract_tar(archive: Path, dest: Path, report: Reporter, strip: int = 0,
     """Stream-extract a tar archive onto any filesystem, FAT included.
 
     Links are materialised as copies afterwards (FAT can't hold symlinks), and
-    entries that would escape dest are dropped.
+    entries or links that would escape dest are dropped.
     """
     links: list[tuple[Path, str, bool]] = []
     reader = _CountingReader(archive, report)
@@ -290,6 +299,10 @@ def _extract_tar(archive: Path, dest: Path, report: Reporter, strip: int = 0,
         else:
             src = dest.joinpath(*PurePosixPath(target).parts[strip:])
         out = dest / rel
+        # Git for Windows has absolute links like dev/fd -> /proc/self/fd that MSYS emulates
+        # itself; followed here they'd copy from the host's own /proc on Linux
+        if PurePosixPath(target).is_absolute() or not src.resolve().is_relative_to(dest.resolve()):
+            continue
         if src.is_file():
             out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, out)
@@ -354,6 +367,30 @@ def running_from(target: Path) -> list[str]:
         if os.path.normcase(os.path.realpath(exe)).startswith(root):
             names.add(p.info.get("name") or os.path.basename(exe))
     return sorted(names)
+
+
+def _remove_appledouble(target: Path) -> None:
+    """Delete the ._ files macOS left next to everything CLUD wrote on FAT/exFAT.
+
+    Tens of thousands of them, each taking a whole cluster. Only CLUD's own files are
+    touched, not the rest of the drive. Hidden flags are stored natively and survive.
+    """
+    def remove(dot: Path) -> None:
+        if dot.with_name(dot.name[2:]).exists():
+            try:
+                dot.unlink()
+            except OSError:
+                pass
+
+    owned = {p.name for p in STICK_FILES.iterdir()}
+    owned.update(MANAGED_DIRS, ("work", "clud-version.json"))
+    for name in owned:
+        remove(target / f"._{name}")
+        if name != "work" and (target / name).is_dir():
+            for root, dirs, files in os.walk(target / name):
+                for f in files:
+                    if f.startswith("._"):
+                        remove(Path(root) / f)
 
 
 def _copy_file(src: Path, dst: Path) -> None:
@@ -439,7 +476,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
         raise RuntimeError("bash.exe missing after extracting Git for Windows")
 
     next_step()
-    _extract_tar(py_tar, stage / "py", report, strip=1)
+    _extract_tar(py_tar, stage / "py", report, strip=1, skip=PY_SKIP)
 
     next_step()
     report.progress(0, 0)
@@ -455,7 +492,9 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError(f"Installing Windows-MCP failed:\n{r.stderr.strip()}")
-        shutil.copytree(tmp, site, copy_function=shutil.copyfile, dirs_exist_ok=True)
+        # Test suites and type stubs are ~1,200 files that are never loaded at runtime
+        shutil.copytree(tmp, site, copy_function=shutil.copyfile, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("tests", "*.pyi"))
     report.log("Windows-MCP installed")
 
     next_step()
@@ -520,9 +559,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
     for name in HIDDEN:
         _hide(target / name)
     if sys.platform == "darwin":
-        # macOS keeps file metadata in a ._ file next to every file on FAT/exFAT: tens of
-        # thousands of them, each taking a whole cluster. The hidden flags survive this.
-        subprocess.run(["dot_clean", "-m", str(target)], capture_output=True)
+        _remove_appledouble(target)
     if rename:
         note = _rename(target, report)
         if note:

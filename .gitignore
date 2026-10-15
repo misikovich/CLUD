@@ -14,3 +14,6 @@ __pycache__/
 # Preview renders (README images in docs/ are kept)
 *.png
 !/docs/*.png
+
+# Linux test VM (tests/linux-vm.sh)
+/.vm/
