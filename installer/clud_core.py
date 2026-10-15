@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import re
 import shutil
 import ssl
@@ -19,6 +20,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -95,6 +97,17 @@ def _linux_removable(device: str) -> bool:
     return False
 
 
+def _mac_external(device: str) -> bool:
+    # Anything under /Volumes counts on a Mac, including the internal Recovery volume and
+    # mounted .dmg files, so ask diskutil whether it's really a separate physical drive
+    try:
+        r = subprocess.run(["diskutil", "info", "-plist", device], capture_output=True, timeout=10)
+        info = plistlib.loads(r.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return not info.get("Internal", True) and info.get("BusProtocol") != "Disk Image"
+
+
 def _clud_version(mount: Path) -> str | None:
     if not (mount / "CLUD.cmd").exists():
         return None
@@ -121,7 +134,7 @@ def list_drives(show_all: bool = False) -> list[Drive]:
             if mount.startswith("/System/Volumes/") or mount.startswith("/private/"):
                 continue
             system = os.path.realpath(mount) == "/"
-            removable = mount.startswith("/Volumes/") and not system
+            removable = mount.startswith("/Volumes/") and not system and _mac_external(part.device)
             label = os.path.basename(mount) or mount
         else:
             if part.fstype in ("squashfs", "overlay", "tmpfs") or mount.startswith(("/snap/", "/boot")):
@@ -431,14 +444,18 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
     next_step()
     report.progress(0, 0)
     site = stage / "py" / "Lib" / "site-packages"
+    # Install into a local folder, then copy over: on FAT/exFAT macOS litters the target
+    # with ._ AppleDouble files mid-install, which uv then rejects as not in the wheel.
     # --link-mode copy: uv would otherwise hardlink from its cache when the target is on the
     # same disk, sharing files (like psutil's .pyd) with this very process and making them
     # undeletable on the next update
-    cmd = [_uv(), "pip", "install", "--quiet", "--link-mode", "copy", "--target", str(site),
-           "--python-platform", "x86_64-pc-windows-msvc", "--python-version", "3.13", "windows-mcp"]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"Installing Windows-MCP failed:\n{r.stderr.strip()}")
+    with tempfile.TemporaryDirectory(prefix="clud-mcp-") as tmp:
+        cmd = [_uv(), "pip", "install", "--quiet", "--link-mode", "copy", "--target", tmp,
+               "--python-platform", "x86_64-pc-windows-msvc", "--python-version", "3.13", "windows-mcp"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"Installing Windows-MCP failed:\n{r.stderr.strip()}")
+        shutil.copytree(tmp, site, copy_function=shutil.copyfile, dirs_exist_ok=True)
     report.log("Windows-MCP installed")
 
     next_step()
@@ -502,6 +519,10 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
     next_step()
     for name in HIDDEN:
         _hide(target / name)
+    if sys.platform == "darwin":
+        # macOS keeps file metadata in a ._ file next to every file on FAT/exFAT: tens of
+        # thousands of them, each taking a whole cluster. The hidden flags survive this.
+        subprocess.run(["dot_clean", "-m", str(target)], capture_output=True)
     if rename:
         note = _rename(target, report)
         if note:
