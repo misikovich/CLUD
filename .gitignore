@@ -17,3 +17,6 @@ __pycache__/
 
 # Linux test VM (tests/linux-vm.sh)
 /.vm/
+
+# Windows test VM (tests/windows-vm.sh)
+/.vm-win/

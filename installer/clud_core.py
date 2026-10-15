@@ -22,7 +22,9 @@ import sys
 import tarfile
 import tempfile
 import time
+import threading
 import urllib.request
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -262,6 +264,57 @@ class _CountingReader:
         self._f.close()
 
 
+class _ParallelWriter:
+    """Writes files from a pool of threads.
+
+    Linux mounts FAT sticks with "flush", so closing a file waits for it to reach the
+    stick: one writer manages ~9 small files/s, 32 in parallel ~250. Big files are written
+    inline and the bytes held in memory are capped.
+    """
+
+    INLINE = 8 << 20
+    MAX_PENDING = 64 << 20
+
+    def __init__(self) -> None:
+        self._pool = ThreadPoolExecutor(32)
+        self._pending = 0
+        self._cond = threading.Condition()
+        self._futures: list[Future] = []
+
+    def write(self, out: Path, data: bytes) -> None:
+        with self._cond:
+            self._cond.wait_for(lambda: self._pending + len(data) <= self.MAX_PENDING)
+            self._pending += len(data)
+        self._futures.append(self._pool.submit(self._write, out, data))
+
+    def _write(self, out: Path, data: bytes) -> None:
+        try:
+            with open(out, "wb") as f:
+                f.write(data)
+        finally:
+            with self._cond:
+                self._pending -= len(data)
+                self._cond.notify_all()
+
+    def copy(self, src: str, dst: str) -> None:
+        if os.path.getsize(src) > self.INLINE:
+            shutil.copyfile(src, dst)
+        else:
+            self.write(Path(dst), Path(src).read_bytes())
+
+    def wait(self) -> None:
+        """Block until everything is written; re-raises the first failure."""
+        self._pool.shutdown(wait=True)
+        for f in self._futures:
+            f.result()
+
+    def __enter__(self) -> "_ParallelWriter":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.wait()
+
+
 def _extract_tar(archive: Path, dest: Path, report: Reporter, strip: int = 0,
                  skip: tuple[str, ...] = (), only: str | None = None) -> None:
     """Stream-extract a tar archive onto any filesystem, FAT included.
@@ -272,7 +325,7 @@ def _extract_tar(archive: Path, dest: Path, report: Reporter, strip: int = 0,
     links: list[tuple[Path, str, bool]] = []
     reader = _CountingReader(archive, report)
     try:
-        with tarfile.open(fileobj=reader, mode="r|*") as tf:
+        with _ParallelWriter() as writer, tarfile.open(fileobj=reader, mode="r|*") as tf:
             for m in tf:
                 parts = PurePosixPath(m.name).parts[strip:]
                 if not parts or ".." in parts or parts[0].startswith("/"):
@@ -287,8 +340,12 @@ def _extract_tar(archive: Path, dest: Path, report: Reporter, strip: int = 0,
                     out.mkdir(parents=True, exist_ok=True)
                 elif m.isfile():
                     out.parent.mkdir(parents=True, exist_ok=True)
-                    with tf.extractfile(m) as src, open(out, "wb") as f:
-                        shutil.copyfileobj(src, f, 1 << 20)
+                    with tf.extractfile(m) as src:
+                        if m.size > writer.INLINE:
+                            with open(out, "wb") as f:
+                                shutil.copyfileobj(src, f, 1 << 20)
+                        else:
+                            writer.write(out, src.read())
                 elif m.issym() or m.islnk():
                     links.append((Path(*parts), m.linkname, m.issym()))
     finally:
@@ -493,8 +550,9 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
         if r.returncode != 0:
             raise RuntimeError(f"Installing Windows-MCP failed:\n{r.stderr.strip()}")
         # Test suites and type stubs are ~1,200 files that are never loaded at runtime
-        shutil.copytree(tmp, site, copy_function=shutil.copyfile, dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns("tests", "*.pyi"))
+        with _ParallelWriter() as writer:
+            shutil.copytree(tmp, site, copy_function=writer.copy, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("tests", "*.pyi"))
     report.log("Windows-MCP installed")
 
     next_step()
