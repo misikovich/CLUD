@@ -1,0 +1,10 @@
+[Desktop Entry]
+# Linux launcher: double-click in the file manager. %k is this file's path (GLib) or the
+# folder it's in (pcmanfm, Raspberry Pi OS); either way CLUD.sh sits next to it.
+Type=Application
+Name=CLUD
+Comment=Portable Claude Code, running from this drive
+Exec=sh -c 'd="$0"; [ -d "$d" ] || d="$(dirname "$d")"; exec sh "$d/CLUD.sh"' %k
+Terminal=true
+Icon=utilities-terminal
+Categories=Utility;

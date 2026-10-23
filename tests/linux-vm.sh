@@ -154,12 +154,15 @@ grep -q "$mnt" /tmp/list.txt || fail "the stick ($mnt) isn't in --list"
 echo "== Fresh install to $mnt"
 ./CLUD-Installer.sh --target "$mnt" --yes
 for f in CLUD.exe CLUD.cmd autorun.inf clud.ico clud-version.json app/claude.exe \
-         git/bin/bash.exe py/python.exe config/CLAUDE.md mcp/windows-mcp.cmd; do
+         git/bin/bash.exe py/python.exe config/CLAUDE.md mcp/windows-mcp.cmd mcp/windows-mcp.json \
+         CLUD.sh CLUD.desktop mcp/clud_desktop.py linux-arm64/claude.exe linux-arm64/py/bin/python3.exe \
+         linux-x64/claude.exe linux-x64/py/bin/python3.exe; do
     [ -e "$mnt/$f" ] || fail "$f missing on the stick"
 done
 [ -z "$(find "$mnt" -name '._*' | head -1)" ] || fail "AppleDouble ._ files on the stick"
 [ ! -e "$mnt/.clud-new" ] && [ ! -e "$mnt/.clud-old" ] || fail "staging folders left behind"
 echo "Stick contents: $(du -sh "$mnt" | cut -f1), $(find "$mnt" -type f | wc -l) files"
+"$mnt/linux-arm64/claude.exe" --version || fail "the Linux ARM64 build doesn't run"
 
 echo "== Update over the existing install (keeps config)"
 echo "test-marker" > "$mnt/config/marker.txt"
