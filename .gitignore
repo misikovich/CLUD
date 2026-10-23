@@ -20,3 +20,6 @@ __pycache__/
 
 # Windows test VM (tests/windows-vm.sh)
 /.vm-win/
+
+# Raspberry Pi OS test VM (tests/pi-vm.sh)
+/.vm-pi/

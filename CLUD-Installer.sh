@@ -17,7 +17,8 @@ if [ ! -x "$UV" ]; then
     case "$(uname -m)" in
         x86_64|amd64) arch="x86_64" ;;
         arm64|aarch64) arch="aarch64" ;;
-        *) echo "Unsupported CPU: $(uname -m)"; exit 1 ;;
+        *) echo "Unsupported CPU: $(uname -m). The installer needs a 64-bit system (x86-64 or ARM64);"
+           echo "on a Raspberry Pi, use 64-bit Raspberry Pi OS."; exit 1 ;;
     esac
     url="https://github.com/astral-sh/uv/releases/latest/download/uv-$arch-$os.tar.gz"
     echo "Fetching uv, one time only, about 20 MB..."

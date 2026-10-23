@@ -16,6 +16,7 @@ set "MCP_TIMEOUT=120000"
 title CLUD on %COMPUTERNAME%
 rem Start in the host PC's user folder (CLUD works on the host), or in a folder dropped onto CLUD.exe
 if "%~1"=="" (cd /d "%USERPROFILE%") else (cd /d "%~1")
-rem Permission prompts are off: CLUD acts without asking (see config\CLAUDE.md for its own rules)
-call claude --dangerously-skip-permissions
+rem Permission prompts are off: CLUD acts without asking (see config\CLAUDE.md for its own rules).
+rem The computer-use server comes from mcp\windows-mcp.json, so CLUD.sh can use its own on Linux.
+call claude --dangerously-skip-permissions --mcp-config "%USB%\mcp\windows-mcp.json"
 endlocal

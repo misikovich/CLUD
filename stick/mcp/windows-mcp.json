@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "windows-mcp": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": ["/c", "windows-mcp.cmd"],
+      "env": {}
+    }
+  }
+}

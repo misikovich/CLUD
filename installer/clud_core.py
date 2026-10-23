@@ -1,11 +1,16 @@
 """CLUD install logic: finding drives and building a CLUD stick on one. No UI in here.
 
-Everything that lands on the stick is Windows software, but it is fetched as plain
-archives so the stick can be built from Windows, macOS or Linux alike:
-  - Claude Code: the native win32-x64 binary straight from the npm registry
-  - Git for Windows: the full .tar.bz2 build (provides git + the bash.exe Claude needs)
-  - Python: python-build-standalone 3.13 for Windows, relocatable, no venv
-  - Windows-MCP: pip-installed into that Python with uv, targeting the Windows platform
+The stick carries a build for each platform picked (see PLATFORMS). Everything is fetched
+as plain archives, so the stick can be built from Windows, macOS or Linux alike:
+  - Claude Code: the native binary for each platform straight from the npm registry
+  - Windows: Git for Windows, the full .tar.bz2 build (git + the bash.exe Claude needs)
+  - Python: python-build-standalone 3.13 per platform, relocatable, no venv
+  - Computer use: Windows-MCP on Windows; on Linux CLUD's own mcp/clud_desktop.py, whose
+    dependencies (Pillow, python-xlib) go into that platform's Python. Installed with uv,
+    targeting the stick's platform rather than the one the installer runs on.
+
+Linux binaries are named *.exe on purpose: Linux mounts FAT32 sticks with "showexec",
+which only lets files ending in .exe/.com/.bat run.
 """
 
 from __future__ import annotations
@@ -36,17 +41,42 @@ STICK_FILES = REPO / "stick"
 CACHE = REPO / ".cache"
 LABEL = "CLUD"
 
-# Rough size of an install, used to refuse drives that are too small. Updates need it
-# too: the new version is built next to the old one before swapping in.
-NEEDED_BYTES = 900 * 1024**2
+
+@dataclass(frozen=True)
+class Platform:
+    key: str
+    title: str
+    dirs: tuple[str, ...]  # top-level folders on the stick it owns
+    size: int  # rough install size, used to refuse drives that are too small
+
+
+PLATFORMS = (
+    Platform("windows", "Windows (64-bit PC)", ("app", "git", "py"), 900 * 1024**2),
+    Platform("linux-arm64", "Linux ARM64 (Raspberry Pi 3/4/5 with 64-bit Pi OS)", ("linux-arm64",),
+             340 * 1024**2),
+    Platform("linux-x64", "Linux x64 (64-bit PC: Ubuntu, Debian, Mint, Fedora, ...)", ("linux-x64",),
+             350 * 1024**2),
+)
+PLATFORM_KEYS = tuple(p.key for p in PLATFORMS)
+
+
+def needed_bytes(platforms) -> int:
+    """Free space an install needs. Updates need it too: the new version is built next to
+    the old one before swapping in."""
+    return sum(p.size for p in PLATFORMS if p.key in platforms)
+
+
+# Everything, the default
+NEEDED_BYTES = needed_bytes(PLATFORM_KEYS)
 
 # Folders the installer owns and replaces wholesale on update. "node" and ".npm-cache"
 # are from the old npm-based layout and are removed when found.
-MANAGED_DIRS = ("app", "git", "py")
+MANAGED_DIRS = tuple(d for p in PLATFORMS for d in p.dirs)
 LEGACY_DIRS = ("node", ".npm-cache")
 STAGING = ".clud-new"
 RETIRED = ".clud-old"
-HIDDEN = ("app", "git", "py", "mcp", "CLUD.cmd", "autorun.inf", "clud.ico", "clud-version.json")
+# Hidden on Windows and macOS (Linux file managers ignore the FAT hidden flag)
+HIDDEN = MANAGED_DIRS + ("mcp", "CLUD.cmd", "CLUD.sh", "autorun.inf", "clud.ico", "clud-version.json")
 
 # Parts of Git for Windows that Claude never uses: docs, Vim's runtime, timezone data and
 # Tcl/Tk for the gitk / git gui GUIs. Every file written to a stick costs ~20-40 ms (more
@@ -60,6 +90,14 @@ GIT_SKIP = ("usr/share/doc/", "usr/share/man/", "usr/share/info/", "usr/share/gt
 
 # Same for Python: Tcl/Tk for tkinter, IDLE, demos, and C headers (~1,650 files)
 PY_SKIP = ("tcl/", "include/", "Lib/idlelib/", "Lib/turtledemo/")
+# Linux Python: also terminfo (~2,900 files), pip, and every bin/ entry but the interpreter
+# itself (the rest are symlinks, which FAT would turn into 22 MB copies)
+PY_LINUX_SKIP = ("include/", "share/", "lib/tcl", "lib/tk", "lib/itcl", "lib/thread", "lib/libtcl",
+                 "lib/libpython", "lib/pkgconfig/", "lib/python3.13/idlelib/", "lib/python3.13/turtledemo/",
+                 "lib/python3.13/tkinter/", "lib/python3.13/ensurepip/", "lib/python3.13/site-packages/pip",
+                 "lib/python3.13/config-3.13", "bin/python3-", "bin/python3.13-", "bin/pip", "bin/idle",
+                 "bin/pydoc", "bin/python3", "bin/python")
+LINUX_PY_BIN = "bin/python3.13"
 
 _SSL = ssl.create_default_context(cafile=certifi.where())
 
@@ -84,6 +122,7 @@ class Drive:
     removable: bool
     system: bool
     clud_version: str | None  # None: no CLUD on it; "" when the version is unknown
+    clud_platforms: tuple[str, ...] = ()
 
     @property
     def has_clud(self) -> bool:
@@ -119,13 +158,16 @@ def _mac_external(device: str) -> bool:
     return not info.get("Internal", True) and info.get("BusProtocol") != "Disk Image"
 
 
-def _clud_version(mount: Path) -> str | None:
+def _clud_info(mount: Path) -> tuple[str | None, tuple[str, ...]]:
+    """(Claude Code version, platforms) of the CLUD on a drive; version None if there's none."""
     if not (mount / "CLUD.cmd").exists():
-        return None
+        return None, ()
     try:
-        return json.loads((mount / "clud-version.json").read_text()).get("claude", "")
+        info = json.loads((mount / "clud-version.json").read_text())
     except (OSError, ValueError):
-        return ""
+        info = {}
+    # Sticks from before Linux support only had Windows
+    return info.get("claude", ""), tuple(info.get("platforms", ["windows"]))
 
 
 def list_drives(show_all: bool = False) -> list[Drive]:
@@ -163,7 +205,7 @@ def list_drives(show_all: bool = False) -> list[Drive]:
             continue  # card reader with no card, permission denied, ...
         path = Path(mount)
         drives.append(Drive(path, label, part.fstype, usage.total, usage.free, removable, system,
-                            _clud_version(path)))
+                            *_clud_info(path)))
     return drives
 
 
@@ -180,11 +222,11 @@ def human(n: float) -> str:
 @dataclass
 class Sources:
     claude_version: str
-    claude_url: str
+    claude_urls: dict[str, str]  # platform key -> npm tarball
     git_version: str
     git_url: str
     python_version: str
-    python_url: str
+    python_urls: dict[str, str]  # platform key -> python-build-standalone archive
 
 
 def _get_json(url: str):
@@ -201,22 +243,38 @@ def _github_asset(repo: str, pattern: str) -> tuple[str, str]:
     raise RuntimeError(f"No asset matching {pattern} in the latest {repo} release")
 
 
+# npm package suffix and python-build-standalone target per platform
+NPM_PLATFORM = {"windows": "win32-x64", "linux-arm64": "linux-arm64", "linux-x64": "linux-x64"}
+PY_TARGET = {"windows": "x86_64-pc-windows-msvc", "linux-arm64": "aarch64-unknown-linux-gnu",
+             "linux-x64": "x86_64-unknown-linux-gnu"}
+
+
 def resolve_sources() -> Sources:
-    """Look up the latest version of each component (3 small web requests)."""
+    """Look up the latest version of each component (a handful of small web requests)."""
     claude = _get_json("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")["version"]
-    win = _get_json(f"https://registry.npmjs.org/@anthropic-ai/claude-code-win32-x64/{claude}")
+    claude_urls = {
+        key: _get_json(f"https://registry.npmjs.org/@anthropic-ai/claude-code-{npm}/{claude}")["dist"]["tarball"]
+        for key, npm in NPM_PLATFORM.items()
+    }
     git_name, git_url = _github_asset("git-for-windows/git", r"Git-[\d.]+-64-bit\.tar\.bz2")
-    py_name, py_url = _github_asset(
-        "astral-sh/python-build-standalone",
-        r"cpython-3\.13\.\d+\+\d+-x86_64-pc-windows-msvc-install_only_stripped\.tar\.gz",
-    )
+    rel = _get_json("https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest")
+    python_urls, py_version = {}, ""
+    for key, target in PY_TARGET.items():
+        pattern = rf"cpython-(3\.13\.\d+)\+\d+-{re.escape(target)}-install_only_stripped\.tar\.gz"
+        for asset in rel["assets"]:
+            m = re.fullmatch(pattern, asset["name"])
+            if m:
+                python_urls[key], py_version = asset["browser_download_url"], m.group(1)
+                break
+        else:
+            raise RuntimeError(f"No Python 3.13 for {target} in the latest python-build-standalone release")
     return Sources(
         claude_version=claude,
-        claude_url=win["dist"]["tarball"],
+        claude_urls=claude_urls,
         git_version=re.search(r"Git-([\d.]+)-64-bit", git_name).group(1),
         git_url=git_url,
-        python_version=re.search(r"cpython-([\d.]+)\+", py_name).group(1),
-        python_url=py_url,
+        python_version=py_version,
+        python_urls=python_urls,
     )
 
 
@@ -316,7 +374,7 @@ class _ParallelWriter:
 
 
 def _extract_tar(archive: Path, dest: Path, report: Reporter, strip: int = 0,
-                 skip: tuple[str, ...] = (), only: str | None = None) -> None:
+                 skip: tuple[str, ...] = (), only: str | None = None, keep: tuple[str, ...] = ()) -> None:
     """Stream-extract a tar archive onto any filesystem, FAT included.
 
     Links are materialised as copies afterwards (FAT can't hold symlinks), and
@@ -333,7 +391,7 @@ def _extract_tar(archive: Path, dest: Path, report: Reporter, strip: int = 0,
                 rel = "/".join(parts)
                 if only is not None and rel != only:
                     continue
-                if any(rel.startswith(s) or rel + "/" == s for s in skip):
+                if rel not in keep and any(rel.startswith(s) or rel + "/" == s for s in skip):
                     continue
                 out = dest.joinpath(*parts)
                 if m.isdir():
@@ -375,6 +433,16 @@ def _unhide(path: Path) -> None:
         attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
         if attrs != -1 and attrs & 0x2:
             ctypes.windll.kernel32.SetFileAttributesW(str(path), attrs & ~0x2)
+
+
+def _make_executable(path: Path) -> None:
+    # Only matters when installing to a folder on a Linux/macOS disk; FAT and exFAT
+    # sticks get their permissions from how they're mounted
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o755)
+        except OSError:
+            pass
 
 
 def _hide(path: Path) -> None:
@@ -476,84 +544,119 @@ def _rename(mount: Path, report: Reporter) -> str | None:
 
 # --- Install --------------------------------------------------------------------------
 
-STEPS = (
-    "Downloading Claude Code",
-    "Downloading Git for Windows",
-    "Downloading Python",
-    "Installing Claude Code",
-    "Installing Git for Windows",
-    "Installing Python",
-    "Installing Windows-MCP (computer use)",
-    "Switching to the new version",
-    "Writing launcher and settings",
-    "Finishing up",
-)
+def steps(platforms) -> list[str]:
+    """Step titles of an install of these platforms, in order."""
+    out = []
+    for p in PLATFORMS:
+        if p.key in platforms:
+            out.append(f"Downloading for {p.title.split(' (')[0]}")
+    for p in PLATFORMS:
+        if p.key == "windows" and p.key in platforms:
+            out += ["Installing Claude Code for Windows", "Installing Git for Windows",
+                    "Installing Python for Windows", "Installing Windows-MCP (computer use)"]
+        elif p.key in platforms:
+            name = p.title.split(" (")[0]
+            out += [f"Installing Claude Code for {name}", f"Installing Python + computer use for {name}"]
+    return out + ["Switching to the new version", "Writing launchers and settings", "Finishing up"]
 
 
-def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[str]:
-    """Build or update a CLUD stick at target. Returns notes worth showing the user.
-
-    Your login, settings, history and anything in work\\ are left alone.
-    """
-    notes: list[str] = []
-    busy = running_from(target)
-    if busy:
-        raise RuntimeError(f"CLUD is running from this drive ({', '.join(busy)}). "
-                           "Close it, then try again.")
-    n = len(STEPS)
-    step = iter(range(n))
-
-    def next_step() -> None:
-        i = next(step)
-        report.step(i, n, STEPS[i])
-        report.log(f"[{i + 1}/{n}] {STEPS[i]}")
-
-    next_step()
-    claude_tgz = _download(src.claude_url, report)
-    next_step()
-    git_tar = _download(src.git_url, report)
-    next_step()
-    py_tar = _download(src.python_url, report)
-
-    # Build the new app/git/py side by side in a staging folder on the drive and only
-    # swap them in once all three are complete, so a failure (or a yanked stick) mid-way
-    # leaves the previous CLUD working.
-    stage = target / STAGING
-    _rmtree(stage)
-    stage.mkdir()
-
-    next_step()
-    _extract_tar(claude_tgz, stage / "app", report, strip=1, only="claude.exe")
-    if not (stage / "app" / "claude.exe").exists():
-        raise RuntimeError("claude.exe was not in the Claude Code package")
-
-    next_step()
-    _extract_tar(git_tar, stage / "git", report, skip=GIT_SKIP)
-    if not (stage / "git" / "bin" / "bash.exe").exists():
-        raise RuntimeError("bash.exe missing after extracting Git for Windows")
-
-    next_step()
-    _extract_tar(py_tar, stage / "py", report, strip=1, skip=PY_SKIP)
-
-    next_step()
-    report.progress(0, 0)
-    site = stage / "py" / "Lib" / "site-packages"
+def _pip_install(packages: list[str], target: Path, py_target: str, what: str) -> None:
+    """pip-install packages for the stick's platform (not this computer's) into target."""
     # Install into a local folder, then copy over: on FAT/exFAT macOS litters the target
     # with ._ AppleDouble files mid-install, which uv then rejects as not in the wheel.
     # --link-mode copy: uv would otherwise hardlink from its cache when the target is on the
     # same disk, sharing files (like psutil's .pyd) with this very process and making them
     # undeletable on the next update
-    with tempfile.TemporaryDirectory(prefix="clud-mcp-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="clud-pip-") as tmp:
         cmd = [_uv(), "pip", "install", "--quiet", "--link-mode", "copy", "--target", tmp,
-               "--python-platform", "x86_64-pc-windows-msvc", "--python-version", "3.13", "windows-mcp"]
+               "--python-platform", py_target, "--python-version", "3.13", *packages]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
-            raise RuntimeError(f"Installing Windows-MCP failed:\n{r.stderr.strip()}")
+            raise RuntimeError(f"Installing {what} failed:\n{r.stderr.strip()}")
         # Test suites and type stubs are ~1,200 files that are never loaded at runtime
         with _ParallelWriter() as writer:
-            shutil.copytree(tmp, site, copy_function=writer.copy, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns("tests", "*.pyi"))
-    report.log("Windows-MCP installed")
+            shutil.copytree(tmp, target, copy_function=writer.copy, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("tests", "*.pyi", "__pycache__"))
+
+
+def install(target: Path, src: Sources, rename: bool, report: Reporter,
+            platforms=PLATFORM_KEYS) -> list[str]:
+    """Build or update a CLUD stick at target. Returns notes worth showing the user.
+
+    Your login, settings, history and anything in work\\ are left alone. Platforms not
+    picked are removed from the stick.
+    """
+    platforms = [p.key for p in PLATFORMS if p.key in platforms]
+    if not platforms:
+        raise RuntimeError("Pick at least one platform")
+    notes: list[str] = []
+    busy = running_from(target)
+    if busy:
+        raise RuntimeError(f"CLUD is running from this drive ({', '.join(busy)}). "
+                           "Close it, then try again.")
+    titles = steps(platforms)
+    n = len(titles)
+    step = iter(range(n))
+
+    def next_step() -> None:
+        i = next(step)
+        report.step(i, n, titles[i])
+        report.log(f"[{i + 1}/{n}] {titles[i]}")
+
+    archives: dict[str, dict[str, Path]] = {}
+    for key in platforms:
+        next_step()
+        archives[key] = {"claude": _download(src.claude_urls[key], report),
+                         "python": _download(src.python_urls[key], report)}
+        if key == "windows":
+            archives[key]["git"] = _download(src.git_url, report)
+
+    # Build the new folders side by side in a staging folder on the drive and only swap
+    # them in once all are complete, so a failure (or a yanked stick) mid-way leaves the
+    # previous CLUD working.
+    stage = target / STAGING
+    _rmtree(stage)
+    stage.mkdir()
+
+    for key in platforms:
+        a = archives[key]
+        if key == "windows":
+            next_step()
+            _extract_tar(a["claude"], stage / "app", report, strip=1, only="claude.exe")
+            if not (stage / "app" / "claude.exe").exists():
+                raise RuntimeError("claude.exe was not in the Claude Code package")
+
+            next_step()
+            _extract_tar(a["git"], stage / "git", report, skip=GIT_SKIP)
+            if not (stage / "git" / "bin" / "bash.exe").exists():
+                raise RuntimeError("bash.exe missing after extracting Git for Windows")
+
+            next_step()
+            _extract_tar(a["python"], stage / "py", report, strip=1, skip=PY_SKIP)
+
+            next_step()
+            report.progress(0, 0)
+            _pip_install(["windows-mcp"], stage / "py" / "Lib" / "site-packages", PY_TARGET[key],
+                         "Windows-MCP")
+            report.log("Windows-MCP installed")
+        else:
+            out = stage / key
+            next_step()
+            _extract_tar(a["claude"], out, report, strip=1, only="claude")
+            if not (out / "claude").exists():
+                raise RuntimeError(f"claude was not in the Claude Code package for {key}")
+            (out / "claude").rename(out / "claude.exe")
+            _make_executable(out / "claude.exe")
+
+            next_step()
+            _extract_tar(a["python"], out / "py", report, strip=1,
+                         skip=PY_LINUX_SKIP, keep=(LINUX_PY_BIN,))
+            (out / "py" / LINUX_PY_BIN).rename(out / "py" / "bin" / "python3.exe")
+            _make_executable(out / "py" / "bin" / "python3.exe")
+            report.progress(0, 0)
+            _pip_install(["pillow", "python-xlib"], out / "py" / "lib" / "python3.13" / "site-packages",
+                         PY_TARGET[key], "computer use for Linux")
+            report.log(f"Python + computer use for {key} installed")
 
     next_step()
     # Move the old folders aside first: unlike deleting, a move fails cleanly (before
@@ -579,7 +682,8 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
         raise RuntimeError("Something on the drive is in use, probably CLUD itself. Close it and try "
                            "again. Nothing was changed.") from e
     for d in MANAGED_DIRS:
-        (stage / d).rename(target / d)
+        if (stage / d).exists():
+            (stage / d).rename(target / d)
     _rmtree(stage)
     try:
         _rmtree(old)
@@ -594,6 +698,8 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
     for path in sorted(STICK_FILES.rglob("*")):
         rel = path.relative_to(STICK_FILES)
         dst = target / rel
+        if "__pycache__" in rel.parts:
+            continue
         if path.is_dir():
             dst.mkdir(parents=True, exist_ok=True)
         elif rel == Path("config/CLAUDE.md") and dst.exists() and dst.read_bytes() != path.read_bytes():
@@ -605,12 +711,12 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
         else:
             _copy_file(path, dst)
     (target / "work").mkdir(exist_ok=True)
-    _register_mcp(target / "config" / ".claude.json")
+    _unregister_old_mcp(target / "config" / ".claude.json")
     version_file = target / "clud-version.json"
     _unhide(version_file)
     version_file.write_text(json.dumps({
-        "claude": src.claude_version, "git": src.git_version, "python": src.python_version,
-        "installed": time.strftime("%Y-%m-%d"),
+        "claude": src.claude_version, "git": src.git_version if "windows" in platforms else None,
+        "python": src.python_version, "platforms": platforms, "installed": time.strftime("%Y-%m-%d"),
     }, indent=2))
 
     next_step()
@@ -627,18 +733,23 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter) -> list[
     return notes
 
 
-def _register_mcp(cfg: Path) -> None:
-    """Add the windows-mcp server to Claude Code's user config, keeping everything else."""
-    server = {"type": "stdio", "command": "cmd", "args": ["/c", "windows-mcp.cmd"], "env": {}}
-    data = {}
-    if cfg.exists():
-        try:
-            data = json.loads(cfg.read_text(encoding="utf-8"))
-        except ValueError:
-            data = {}
-    if data.get("mcpServers", {}).get("windows-mcp") == server:
+# Older sticks registered Windows-MCP in config\.claude.json. The launchers now pass their
+# platform's computer-use server with --mcp-config instead, so Linux doesn't try to start
+# the Windows one.
+OLD_WINDOWS_MCP = {"type": "stdio", "command": "cmd", "args": ["/c", "windows-mcp.cmd"], "env": {}}
+
+
+def _unregister_old_mcp(cfg: Path) -> None:
+    """Remove the old windows-mcp entry from Claude Code's user config, keeping everything else."""
+    if not cfg.exists():
         return
-    data.setdefault("mcpServers", {})["windows-mcp"] = server
+    try:
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+    except ValueError:
+        return
+    servers = data.get("mcpServers") or {}
+    if servers.get("windows-mcp") != OLD_WINDOWS_MCP:
+        return
+    del servers["windows-mcp"]
     _unhide(cfg)
-    cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")

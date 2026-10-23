@@ -13,6 +13,8 @@ Without arguments it opens the TUI. For scripting:
     --list                 print the drives and exit
     --target PATH --yes    install to PATH without the TUI
     --no-rename            don't rename the drive to CLUD
+    --platforms LIST       comma-separated: windows, linux-arm64, linux-x64, or linux for
+                           both Linux builds (default: all)
     --all                  include non-removable drives
 """
 
@@ -63,7 +65,7 @@ def print_drives(show_all: bool) -> None:
         print("No removable drives found. Use --all to list every drive.")
     for d in drives:
         kind = "system" if d.system else ("removable" if d.removable else "fixed")
-        clud = f"  CLUD {d.clud_version or '?'}" if d.has_clud else ""
+        clud = f"  CLUD {d.clud_version or '?'} ({', '.join(d.clud_platforms)})" if d.has_clud else ""
         print(f"{str(d.mount):<24} {d.label:<16} {d.fstype:<6} {core.human(d.total):>9} total  "
               f"{core.human(d.free):>9} free  {kind}{clud}")
 
@@ -76,10 +78,19 @@ def run_cli(args: argparse.Namespace) -> int:
     if not args.yes:
         print("Add --yes to confirm installing to", target)
         return 1
+    platforms = []
+    for name in args.platforms.split(","):
+        name = name.strip().lower()
+        keys = [k for k in core.PLATFORM_KEYS if k.startswith("linux")] if name == "linux" else [name]
+        if not all(k in core.PLATFORM_KEYS for k in keys):
+            print(f"Unknown platform {name!r}. Choose from: {', '.join(core.PLATFORM_KEYS)}, linux")
+            return 1
+        platforms += keys
     print("Looking up the latest versions...")
     src = core.resolve_sources()
     print(f"Claude Code {src.claude_version}, Git {src.git_version}, Python {src.python_version}")
-    notes = core.install(target, src, rename=not args.no_rename, report=PrintReporter())
+    print("Platforms:", ", ".join(k for k in core.PLATFORM_KEYS if k in platforms))
+    notes = core.install(target, src, rename=not args.no_rename, report=PrintReporter(), platforms=platforms)
     for note in notes:
         print("Note:", note)
     return 0
@@ -148,7 +159,8 @@ def run_tui(show_all: bool) -> int:
         def compose(self) -> ComposeResult:
             yield Header(icon=header_icon)
             yield Static(f"[{ACCENT}]{BANNER}[/]", id="banner")
-            yield Static("Portable Claude Code for any Windows PC. Pick the drive to install it on.",
+            yield Static("Portable Claude Code for Windows PCs and Linux, Raspberry Pi included. "
+                         "Pick the drive to install it on.",
                          id="tagline")
             yield DataTable(id="drives", cursor_type="row", zebra_stripes=True)
             yield Static("", id="hint")
@@ -181,7 +193,7 @@ def run_tui(show_all: bool) -> int:
                 hint.update("No removable drives found. Plug one in and press [b]r[/], "
                             "or press [b]a[/] to show every drive.")
             else:
-                hint.update(f"Needs about {core.human(core.NEEDED_BYTES)} free. "
+                hint.update(f"Needs about {core.human(core.NEEDED_BYTES)} free for every platform. "
                             "Drives that already have CLUD get updated; your login and settings are kept.")
             table.focus()
 
@@ -206,8 +218,9 @@ def run_tui(show_all: bool) -> int:
                 self.notify("That's the drive your system runs from. Pick a USB drive or card.",
                             severity="error")
                 return
-            if d.free < core.NEEDED_BYTES:
-                self.notify(f"Not enough space: needs about {core.human(core.NEEDED_BYTES)} free.",
+            smallest = min(p.size for p in core.PLATFORMS)
+            if d.free < smallest:
+                self.notify(f"Not enough space: needs at least {core.human(smallest)} free.",
                             severity="error")
                 return
             self.app.push_screen(ConfirmScreen(d))
@@ -224,7 +237,7 @@ def run_tui(show_all: bool) -> int:
             d = self.drive
             action = "Update CLUD on" if d.has_clud else "Install CLUD on"
             yield Header(icon=header_icon)
-            with Vertical(id="confirm-box"):
+            with VerticalScroll(id="confirm-box"):
                 yield Static(Content.from_markup("[b]$action $mount[/b]  $label", action=action, mount=str(d.mount),
                                                  label=d.label), id="title")
                 yield Static(f"{d.fstype} · {core.human(d.total)} · {core.human(d.free)} free", classes="muted")
@@ -236,6 +249,10 @@ def run_tui(show_all: bool) -> int:
                     "it acts without asking.",
                     id="notes",
                 )
+                yield Static("Platforms to put on the stick:", classes="muted")
+                for p in core.PLATFORMS:
+                    yield Checkbox(p.title, value=True, id=f"plat-{p.key}", classes="platform")
+                yield Static("", id="space")
                 rename_ok = sys.platform != "linux"
                 yield Checkbox(f"Rename the drive to {core.LABEL}", value=rename_ok and d.label != core.LABEL,
                                disabled=not rename_ok, id="rename")
@@ -245,7 +262,23 @@ def run_tui(show_all: bool) -> int:
             yield Footer()
 
         def on_mount(self) -> None:
+            self.update_space()
             self.lookup()
+
+        def platforms(self) -> list[str]:
+            return [p.key for p in core.PLATFORMS if self.query_one(f"#plat-{p.key}", Checkbox).value]
+
+        def update_space(self) -> None:
+            need = core.needed_bytes(self.platforms())
+            # An update frees the old version's space too, but only after building the new one
+            ok = self.drive.free >= need
+            text = f"Needs about {core.human(need)} free; the drive has {core.human(self.drive.free)}."
+            self.query_one("#space", Static).update(text if ok else f"[red]{text}[/]")
+            self.query_one("#go", Button).disabled = not (ok and self.sources and need)
+
+        def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+            if event.checkbox.has_class("platform"):
+                self.update_space()
 
         @work(thread=True, exclusive=True)
         def lookup(self) -> None:
@@ -260,11 +293,12 @@ def run_tui(show_all: bool) -> int:
             self.sources = src
             self.query_one("#versions", Static).update(
                 f"Claude Code [b]{src.claude_version}[/b] · Git for Windows [b]{src.git_version}[/b] · "
-                f"Python [b]{src.python_version}[/b] + Windows-MCP"
+                f"Python [b]{src.python_version}[/b] + computer use"
             )
+            self.update_space()
             button = self.query_one("#go", Button)
-            button.disabled = False
-            button.focus()
+            if not button.disabled:
+                button.focus()
 
         def lookup_failed(self, error: str) -> None:
             self.query_one("#versions", Static).update(Content.from_markup(
@@ -276,7 +310,7 @@ def run_tui(show_all: bool) -> int:
                 self.app.pop_screen()
             elif event.button.id == "go" and self.sources:
                 rename = self.query_one("#rename", Checkbox).value
-                self.app.switch_screen(InstallScreen(self.drive, self.sources, rename))
+                self.app.switch_screen(InstallScreen(self.drive, self.sources, rename, self.platforms()))
 
     class TuiReporter(core.Reporter):
         def __init__(self, screen: "InstallScreen") -> None:
@@ -298,9 +332,9 @@ def run_tui(show_all: bool) -> int:
     class InstallScreen(Screen):
         BINDINGS = [Binding("q", "quit_if_done", "Quit")]
 
-        def __init__(self, drive: core.Drive, sources: core.Sources, rename: bool) -> None:
+        def __init__(self, drive: core.Drive, sources: core.Sources, rename: bool, platforms: list[str]) -> None:
             super().__init__()
-            self.drive, self.sources, self.rename = drive, sources, rename
+            self.drive, self.sources, self.rename, self.platforms = drive, sources, rename, platforms
             self.finished = False
 
         def compose(self) -> ComposeResult:
@@ -336,7 +370,8 @@ def run_tui(show_all: bool) -> int:
         @work(thread=True, exclusive=True)
         def run_install(self) -> None:
             try:
-                notes = core.install(self.drive.mount, self.sources, self.rename, TuiReporter(self))
+                notes = core.install(self.drive.mount, self.sources, self.rename, TuiReporter(self),
+                                     platforms=self.platforms)
             except Exception as e:
                 self.app.call_from_thread(self.done, False, [str(e)], traceback.format_exc())
                 return
@@ -347,9 +382,14 @@ def run_tui(show_all: bool) -> int:
             log = self.query_one(RichLog)
             result = self.query_one("#result", Static)
             if ok:
-                self.query_one("#overall", ProgressBar).update(progress=len(core.STEPS))
-                text = (f"[b {ACCENT}]CLUD is ready.[/]  Eject the drive safely, plug it into any Windows PC "
-                        "and double-click [b]CLUD.exe[/b].")
+                self.query_one("#overall", ProgressBar).update(progress=len(core.steps(self.platforms)))
+                how = []
+                if "windows" in self.platforms:
+                    how.append("on Windows, double-click [b]CLUD.exe[/b]")
+                if any(p.startswith("linux") for p in self.platforms):
+                    how.append("on Linux or a Raspberry Pi, open [b]CLUD.desktop[/b] (or run [b]sh CLUD.sh[/b])")
+                text = (f"[b {ACCENT}]CLUD is ready.[/]  Eject the drive safely and plug it in: "
+                        + "; ".join(how) + ".")
                 content = Content.from_markup(text)
                 for note in notes:
                     content += Content.from_markup("\n[yellow]•[/] $note", note=note)
@@ -387,6 +427,9 @@ def run_tui(show_all: bool) -> int:
         #title {{ margin-bottom: 1; }}
         .muted {{ color: $text-muted; }}
         #versions {{ margin: 1 0; }}
+        #space {{ margin: 0 0 1 0; }}
+        Checkbox.platform {{ border: none; height: 1; padding: 0 1; background: transparent; }}
+        Checkbox.platform:focus {{ text-style: reverse; }}
         #notes {{ margin: 0 0 1 0; }}
         #buttons {{ height: auto; margin-top: 1; }}
         #buttons Button {{ margin-right: 2; }}
@@ -410,6 +453,8 @@ def main() -> int:
     p.add_argument("--yes", action="store_true", help="confirm --target")
     p.add_argument("--no-rename", action="store_true", help=f"don't rename the drive to {core.LABEL}")
     p.add_argument("--all", action="store_true", help="include non-removable drives")
+    p.add_argument("--platforms", default=",".join(core.PLATFORM_KEYS),
+                   help="comma-separated: windows, linux-arm64, linux-x64, or linux (default: all)")
     args = p.parse_args()
     if args.list:
         print_drives(args.all)
