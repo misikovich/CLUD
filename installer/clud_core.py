@@ -132,6 +132,8 @@ class Reporter:
     def progress(self, done: int, total: int) -> None: ...
     def files(self, done: int, total: int) -> None: ...
     def log(self, message: str) -> None: ...
+    def writing(self, on_stick: bool) -> None:
+        """Whether the bytes now go to the stick (True) or stay on this computer."""
 
 
 # --- Drives ---------------------------------------------------------------------------
@@ -754,6 +756,7 @@ def _install_python(archive: Path, dest: Path, stdlib: str, skip: tuple[str, ...
     """
     with tempfile.TemporaryDirectory(prefix="clud-py-") as tmp:
         py = Path(tmp) / "py"
+        report.writing(False)
         _extract_tar(archive, py, report, strip=1, skip=skip, keep=keep)
         if LINUX_PY_BIN in keep:
             (py / LINUX_PY_BIN).rename(py / "bin" / "python3.exe")
@@ -764,6 +767,7 @@ def _install_python(archive: Path, dest: Path, stdlib: str, skip: tuple[str, ...
         total = sum(f.stat().st_size for f in files)
         done, last = 0, 0.0
         report.files(0, len(files))
+        report.writing(True)
         with _ParallelWriter() as writer:
             for i, f in enumerate(files, 1):
                 out = dest / f.relative_to(py)
@@ -805,6 +809,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
     def next_step() -> None:
         i = next(step)
         report.step(i, n, titles[i])
+        report.writing(not titles[i].startswith("Downloading"))
         report.log(f"[{i + 1}/{n}] {titles[i]}")
 
     archives: dict[str, dict[str, Path]] = {}
@@ -931,6 +936,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
         if note:
             notes.append(note)
     report.progress(1, 1)
+    report.writing(False)
     report.log("Done")
     return notes
 
