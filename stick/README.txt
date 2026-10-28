@@ -9,8 +9,13 @@ Linux:   double-click CLUD (CLUD.desktop) in the file manager. On Raspberry
              sh /media/$USER/CLUD/CLUD.sh [folder]
          Works on 64-bit Linux: Raspberry Pi 3/4/5 with 64-bit Raspberry Pi
          OS, and x64 PCs (Ubuntu, Debian, Mint, Fedora, ...).
-Careful: CLUD runs with --dangerously-skip-permissions. It won't ask before
-         running commands or clicking things, on whatever PC it's plugged into.
+Agents:  with both Claude Code and omp on the stick, CLUD asks which to
+         start (set CLUD_AGENT=claude or omp to skip the question). omp works
+         with many model providers; its logins and settings are in
+         config\omp. omp.yml holds the settings CLUD passes to it.
+Careful: CLUD runs with --dangerously-skip-permissions (omp: --auto-approve).
+         It won't ask before running commands or clicking things, on
+         whatever PC it's plugged into.
 Brief:   config\CLAUDE.md tells Claude it runs off this stick, that its job
          is the host PC, and to prefer computer use. Edit it to taste.
 Login:   first run asks you to /login in the browser. The login is saved in
@@ -20,10 +25,10 @@ Login:   first run asks you to /login in the browser. The login is saved in
 Update:  run the CLUD Installer again and pick this drive. Your login,
          settings and work\ folder are kept.
 
-Layout:  app\          Claude Code for Windows (claude.exe)
+Layout:  app\          Claude Code and/or omp for Windows (claude.exe, omp.exe)
          py\           Python 3.13 with Windows-MCP (computer use on Windows)
-         linux-arm64\  Claude Code + Python for 64-bit ARM Linux (Raspberry Pi)
-         linux-x64\    Claude Code + Python for 64-bit x86 Linux
+         linux-arm64\  Claude Code / omp + Python for 64-bit ARM Linux (Pi)
+         linux-x64\    Claude Code / omp + Python for 64-bit x86 Linux
                        (Linux programs end in .exe so FAT32 lets them run)
          mcp\          computer-use starters; clud_desktop.py is the Linux one
          config\       your settings, history, memory, login

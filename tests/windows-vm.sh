@@ -227,11 +227,13 @@ stick() {
     fi
     [ -d "$mnt" ] || { echo "Couldn't mount the stick image"; exit 1; }
     if [ "$src" = install ]; then
-        "$ROOT/CLUD-Installer.sh" --target "$mnt" --yes --no-rename
+        # CLUD_INSTALL_ARGS: more installer options, e.g. "--platforms windows --agents claude,omp"
+        # shellcheck disable=SC2086
+        "$ROOT/CLUD-Installer.sh" --target "$mnt" --yes --no-rename ${CLUD_INSTALL_ARGS:-}
     else
         [ -f "$src/CLUD.cmd" ] || { echo "$src doesn't look like a CLUD stick (no CLUD.cmd)"; exit 1; }
         echo "Copying CLUD from $src..."
-        for f in CLUD.exe CLUD.cmd README.txt autorun.inf clud-version.json clud.ico app config mcp py work; do
+        for f in CLUD.exe CLUD.cmd omp.yml README.txt autorun.inf clud-version.json clud.ico app config mcp py work; do
             [ -e "$src/$f" ] && rsync -a --exclude '._*' --exclude .DS_Store "$src/$f" "$mnt/"
         done
     fi

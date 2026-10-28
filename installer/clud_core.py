@@ -1,8 +1,12 @@
 """CLUD install logic: finding drives and building a CLUD stick on one. No UI in here.
 
-The stick carries a build for each platform picked (see PLATFORMS). Everything is fetched
-as plain archives, so the stick can be built from Windows, macOS or Linux alike:
+The stick carries a build for each platform picked (see PLATFORMS), with the agents picked
+(see AGENTS): Claude Code, omp, or both. Everything is fetched as plain archives, so the
+stick can be built from Windows, macOS or Linux alike:
   - Claude Code: the native binary for each platform straight from the npm registry
+  - omp (oh-my-pi): its standalone binary for each platform from its GitHub releases. It
+    unpacks a native library (~60-110 MB) next to itself on first start; the launchers
+    point it at the stick (PI_NATIVES_DIR) so that happens once, not on every host.
   - Python: python-build-standalone 3.13 per platform, relocatable, no venv. Its standard
     library and the pure-Python packages are packed into zips it imports from (see
     _pack_python), as a stick takes far longer to write thousands of small files than a
@@ -52,26 +56,46 @@ class Platform:
     key: str
     title: str
     dirs: tuple[str, ...]  # top-level folders on the stick it owns
-    size: int  # rough install size, used to refuse drives that are too small
+    # Rough install sizes, used to refuse drives that are too small: Python and computer
+    # use, then each agent (omp's includes the native library it unpacks on first start)
+    size: int
+    agent_size: dict[str, int]
 
 
+MB = 1024**2
 PLATFORMS = (
-    Platform("windows", "Windows (64-bit PC)", ("app", "py"), 550 * 1024**2),
+    Platform("windows", "Windows (64-bit PC)", ("app", "py"), 200 * MB,
+             {"claude": 350 * MB, "omp": 330 * MB}),
     Platform("linux-arm64", "Linux ARM64 (Raspberry Pi 3/4/5 with 64-bit Pi OS)", ("linux-arm64",),
-             340 * 1024**2),
+             100 * MB, {"claude": 240 * MB, "omp": 360 * MB}),
     Platform("linux-x64", "Linux x64 (64-bit PC: Ubuntu, Debian, Mint, Fedora, ...)", ("linux-x64",),
-             350 * 1024**2),
+             100 * MB, {"claude": 250 * MB, "omp": 400 * MB}),
 )
 PLATFORM_KEYS = tuple(p.key for p in PLATFORMS)
 
 
-def needed_bytes(platforms) -> int:
+@dataclass(frozen=True)
+class Agent:
+    key: str  # also the program's name on the stick: app\<key>.exe, linux-*/<key>.exe
+    title: str
+
+
+# The launchers start the one on the stick, or ask which when there are both
+AGENTS = (
+    Agent("claude", "Claude Code"),
+    Agent("omp", "omp (oh-my-pi): Claude, GPT, Gemini, local models and 60+ more providers"),
+)
+AGENT_KEYS = tuple(a.key for a in AGENTS)
+DEFAULT_AGENTS = ("claude",)
+
+
+def needed_bytes(platforms, agents=DEFAULT_AGENTS) -> int:
     """Free space an install needs. Updates need it too: the new version is built next to
     the old one before swapping in."""
-    return sum(p.size for p in PLATFORMS if p.key in platforms)
+    return sum(p.size + sum(p.agent_size[a] for a in agents) for p in PLATFORMS if p.key in platforms)
 
 
-# Everything, the default
+# Every platform, the default agents
 NEEDED_BYTES = needed_bytes(PLATFORM_KEYS)
 
 # Folders the installer owns and replaces wholesale on update. "node" and ".npm-cache"
@@ -82,7 +106,8 @@ LEGACY_DIRS = ("node", ".npm-cache", "git")
 STAGING = ".clud-new"
 RETIRED = ".clud-old"
 # Hidden on Windows and macOS (Linux file managers ignore the FAT hidden flag)
-HIDDEN = MANAGED_DIRS + ("mcp", "CLUD.cmd", "CLUD.sh", "autorun.inf", "clud.ico", "clud-version.json")
+HIDDEN = MANAGED_DIRS + ("mcp", "CLUD.cmd", "CLUD.sh", "omp.yml", "autorun.inf", "clud.ico",
+                         "clud-version.json")
 
 # Parts of Python CLUD never uses: Tcl/Tk for tkinter, IDLE, demos, C headers and import
 # libraries, pip, and precompiled caches (_pack_python compiles its own)
@@ -121,6 +146,7 @@ class Drive:
     system: bool
     clud_version: str | None  # None: no CLUD on it; "" when the version is unknown
     clud_platforms: tuple[str, ...] = ()
+    clud_agents: tuple[str, ...] = ()
 
     @property
     def has_clud(self) -> bool:
@@ -156,16 +182,21 @@ def _mac_external(device: str) -> bool:
     return not info.get("Internal", True) and info.get("BusProtocol") != "Disk Image"
 
 
-def _clud_info(mount: Path) -> tuple[str | None, tuple[str, ...]]:
-    """(Claude Code version, platforms) of the CLUD on a drive; version None if there's none."""
+def _clud_info(mount: Path) -> tuple[str | None, tuple[str, ...], tuple[str, ...]]:
+    """(version, platforms, agents) of the CLUD on a drive; version None if there's none.
+
+    The version is Claude Code's, or omp's on a stick without Claude Code.
+    """
     if not (mount / "CLUD.cmd").exists():
-        return None, ()
+        return None, (), ()
     try:
         info = json.loads((mount / "clud-version.json").read_text())
     except (OSError, ValueError):
         info = {}
-    # Sticks from before Linux support only had Windows
-    return info.get("claude", ""), tuple(info.get("platforms", ["windows"]))
+    # Sticks from before Linux support only had Windows, from before omp only Claude Code
+    agents = tuple(info.get("agents", ["claude"]))
+    version = info.get("claude", "") if "claude" in agents else info.get("omp", "")
+    return version, tuple(info.get("platforms", ["windows"])), agents
 
 
 def list_drives(show_all: bool = False) -> list[Drive]:
@@ -223,6 +254,9 @@ class Sources:
     claude_urls: dict[str, str]  # platform key -> npm tarball
     python_version: str
     python_urls: dict[str, str]  # platform key -> python-build-standalone archive
+    omp_version: str = ""  # "" when the lookup failed: then omp_error says why
+    omp_urls: dict[str, str] | None = None  # platform key -> release binary
+    omp_error: str = ""
 
 
 def _get_json(url: str):
@@ -235,6 +269,18 @@ def _get_json(url: str):
 NPM_PLATFORM = {"windows": "win32-x64", "linux-arm64": "linux-arm64", "linux-x64": "linux-x64"}
 PY_TARGET = {"windows": "x86_64-pc-windows-msvc", "linux-arm64": "aarch64-unknown-linux-gnu",
              "linux-x64": "x86_64-unknown-linux-gnu"}
+# omp release binary per platform (the glibc Linux builds, not the musl ones)
+OMP_ASSET = {"windows": "omp-windows-x64.exe", "linux-arm64": "omp-linux-arm64", "linux-x64": "omp-linux-x64"}
+OMP_REPO = "can1357/oh-my-pi"
+
+
+def _resolve_omp() -> tuple[str, dict[str, str]]:
+    rel = _get_json(f"https://api.github.com/repos/{OMP_REPO}/releases/latest")
+    assets = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
+    missing = [name for name in OMP_ASSET.values() if name not in assets]
+    if missing:
+        raise RuntimeError(f"omp {rel['tag_name']} has no {', '.join(missing)}")
+    return rel["tag_name"].lstrip("v"), {key: assets[name] for key, name in OMP_ASSET.items()}
 
 
 def resolve_sources() -> Sources:
@@ -255,20 +301,30 @@ def resolve_sources() -> Sources:
                 break
         else:
             raise RuntimeError(f"No Python 3.13 for {target} in the latest python-build-standalone release")
+    # omp is optional: a failed lookup only rules it out, not the whole install
+    omp_version, omp_urls, omp_error = "", None, ""
+    try:
+        omp_version, omp_urls = _resolve_omp()
+    except Exception as e:  # network, GitHub rate limit, a release without some binary
+        omp_error = str(e)
     return Sources(
         claude_version=claude,
         claude_urls=claude_urls,
         python_version=py_version,
         python_urls=python_urls,
+        omp_version=omp_version,
+        omp_urls=omp_urls,
+        omp_error=omp_error,
     )
 
 
 # --- Helpers --------------------------------------------------------------------------
 
-def _download(url: str, report: Reporter) -> Path:
-    """Download into the cache (once) and return the local path."""
+def _download(url: str, report: Reporter, name: str | None = None) -> Path:
+    """Download into the cache (once) and return the local path. name: what to cache it
+    as, for URLs whose file name doesn't carry the version."""
     CACHE.mkdir(exist_ok=True)
-    dest = CACHE / url.rsplit("/", 1)[-1].replace("%2B", "+")
+    dest = CACHE / (name or url.rsplit("/", 1)[-1].replace("%2B", "+"))
     if dest.exists():
         report.log(f"Using cached {dest.name}")
         return dest
@@ -463,6 +519,16 @@ def _rmtree(path: Path) -> None:
         shutil.rmtree(path, onexc=force)
 
 
+def _flush_deletes() -> None:
+    """Write pending deletions out to the drive before anything new reuses their space.
+
+    Linux's exFAT driver can otherwise write a deleted folder's stale data over the next
+    file put in its place: on Linux 7.3, CLUD.cmd came out as all zeros after an install.
+    """
+    if hasattr(os, "sync"):
+        os.sync()
+
+
 def running_from(target: Path) -> list[str]:
     """Names of processes whose executable lives on target (CLUD, its MCP server, ...)."""
     root = os.path.normcase(os.path.realpath(target)).rstrip("\\/") + os.sep
@@ -509,6 +575,17 @@ def _copy_file(src: Path, dst: Path) -> None:
     shutil.copyfile(src, dst)
 
 
+def _copy_big(src: Path, dst: Path, report: Reporter) -> None:
+    """Copy one large file, reporting progress."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    total, done = src.stat().st_size, 0
+    with open(src, "rb") as f, open(dst, "wb") as out:
+        while chunk := f.read(1 << 20):
+            out.write(chunk)
+            done += len(chunk)
+            report.progress(done, total)
+
+
 def _uv() -> str:
     uv = os.environ.get("CLUD_UV") or shutil.which("uv")
     if not uv:
@@ -529,18 +606,24 @@ def _rename(mount: Path, report: Reporter) -> str | None:
 
 # --- Install --------------------------------------------------------------------------
 
-def steps(platforms) -> list[str]:
-    """Step titles of an install of these platforms, in order."""
+def steps(platforms, agents=DEFAULT_AGENTS) -> list[str]:
+    """Step titles of an install of these platforms and agents, in order."""
     out = []
     for p in PLATFORMS:
         if p.key in platforms:
             out.append(f"Downloading for {p.title.split(' (')[0]}")
     for p in PLATFORMS:
-        if p.key == "windows" and p.key in platforms:
-            out += ["Installing Claude Code for Windows", "Installing Python + Windows-MCP (computer use)"]
-        elif p.key in platforms:
-            name = p.title.split(" (")[0]
-            out += [f"Installing Claude Code for {name}", f"Installing Python + computer use for {name}"]
+        if p.key not in platforms:
+            continue
+        name = p.title.split(" (")[0]
+        if "claude" in agents:
+            out.append(f"Installing Claude Code for {name}")
+        if "omp" in agents:
+            out.append(f"Installing omp for {name}")
+        if p.key == "windows":
+            out.append("Installing Python + Windows-MCP (computer use)")
+        else:
+            out.append(f"Installing Python + computer use for {name}")
     return out + ["Switching to the new version", "Writing launchers and settings", "Finishing up"]
 
 
@@ -692,21 +775,26 @@ def _install_python(archive: Path, dest: Path, stdlib: str, skip: tuple[str, ...
 
 
 def install(target: Path, src: Sources, rename: bool, report: Reporter,
-            platforms=PLATFORM_KEYS) -> list[str]:
+            platforms=PLATFORM_KEYS, agents=DEFAULT_AGENTS) -> list[str]:
     """Build or update a CLUD stick at target. Returns notes worth showing the user.
 
-    Your login, settings, history and anything in work\\ are left alone. Platforms not
-    picked are removed from the stick.
+    Your login, settings, history and anything in work\\ are left alone. Platforms and
+    agents not picked are removed from the stick (their logins and settings stay).
     """
     platforms = [p.key for p in PLATFORMS if p.key in platforms]
+    agents = [a.key for a in AGENTS if a.key in agents]
     if not platforms:
         raise RuntimeError("Pick at least one platform")
+    if not agents:
+        raise RuntimeError("Pick at least one agent")
+    if "omp" in agents and not src.omp_urls:
+        raise RuntimeError(f"Couldn't look up omp: {src.omp_error or 'no release found'}")
     notes: list[str] = []
     busy = running_from(target)
     if busy:
         raise RuntimeError(f"CLUD is running from this drive ({', '.join(busy)}). "
                            "Close it, then try again.")
-    titles = steps(platforms)
+    titles = steps(platforms, agents)
     n = len(titles)
     step = iter(range(n))
 
@@ -718,41 +806,50 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
     archives: dict[str, dict[str, Path]] = {}
     for key in platforms:
         next_step()
-        archives[key] = {"claude": _download(src.claude_urls[key], report),
-                         "python": _download(src.python_urls[key], report)}
+        archives[key] = {"python": _download(src.python_urls[key], report)}
+        if "claude" in agents:
+            archives[key]["claude"] = _download(src.claude_urls[key], report)
+        if "omp" in agents:
+            # The release's file names carry no version: cache them under one that does
+            archives[key]["omp"] = _download(src.omp_urls[key], report,
+                                             name=f"omp-{src.omp_version}-{OMP_ASSET[key]}")
 
     # Build the new folders side by side in a staging folder on the drive and only swap
     # them in once all are complete, so a failure (or a yanked stick) mid-way leaves the
     # previous CLUD working.
     stage = target / STAGING
     _rmtree(stage)
+    _flush_deletes()
     stage.mkdir()
 
     for key in platforms:
         a = archives[key]
-        if key == "windows":
+        bin_dir = stage / ("app" if key == "windows" else key)
+        if "claude" in agents:
             next_step()
-            _extract_tar(a["claude"], stage / "app", report, strip=1, only="claude.exe")
-            if not (stage / "app" / "claude.exe").exists():
-                raise RuntimeError("claude.exe was not in the Claude Code package")
+            name = "claude.exe" if key == "windows" else "claude"
+            _extract_tar(a["claude"], bin_dir, report, strip=1, only=name)
+            if not (bin_dir / name).exists():
+                raise RuntimeError(f"{name} was not in the Claude Code package for {key}")
+            if key != "windows":
+                (bin_dir / "claude").rename(bin_dir / "claude.exe")
+                _make_executable(bin_dir / "claude.exe")
+        if "omp" in agents:
+            next_step()
+            _copy_big(a["omp"], bin_dir / "omp.exe", report)
+            _make_executable(bin_dir / "omp.exe")
+            report.log(f"omp {src.omp_version} installed")
 
+        if key == "windows":
             next_step()
             _install_python(a["python"], stage / "py", "Lib", PY_SKIP, (), ["windows-mcp"],
                             PY_TARGET[key], "Windows-MCP", report)
             report.log("Python + Windows-MCP installed")
         else:
-            out = stage / key
             next_step()
-            _extract_tar(a["claude"], out, report, strip=1, only="claude")
-            if not (out / "claude").exists():
-                raise RuntimeError(f"claude was not in the Claude Code package for {key}")
-            (out / "claude").rename(out / "claude.exe")
-            _make_executable(out / "claude.exe")
-
-            next_step()
-            _install_python(a["python"], out / "py", "lib/python3.13", PY_LINUX_SKIP, (LINUX_PY_BIN,),
+            _install_python(a["python"], bin_dir / "py", "lib/python3.13", PY_LINUX_SKIP, (LINUX_PY_BIN,),
                             ["pillow", "python-xlib"], PY_TARGET[key], "computer use for Linux", report)
-            _make_executable(out / "py" / "bin" / "python3.exe")
+            _make_executable(bin_dir / "py" / "bin" / "python3.exe")
             report.log(f"Python + computer use for {key} installed")
 
     next_step()
@@ -790,6 +887,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
         if (target / d).exists() and (target / "CLUD.cmd").exists():
             report.log(f"Removing old {d}\\ (no longer used)")
             _rmtree(target / d)
+    _flush_deletes()
 
     next_step()
     for path in sorted(STICK_FILES.rglob("*")):
@@ -811,10 +909,13 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
     _unregister_old_mcp(target / "config" / ".claude.json")
     version_file = target / "clud-version.json"
     _unhide(version_file)
-    version_file.write_text(json.dumps({
-        "claude": src.claude_version,
-        "python": src.python_version, "platforms": platforms, "installed": time.strftime("%Y-%m-%d"),
-    }, indent=2))
+    info = {"agents": agents}
+    if "claude" in agents:
+        info["claude"] = src.claude_version
+    if "omp" in agents:
+        info["omp"] = src.omp_version
+    info.update(python=src.python_version, platforms=platforms, installed=time.strftime("%Y-%m-%d"))
+    version_file.write_text(json.dumps(info, indent=2))
 
     next_step()
     for name in HIDDEN:
