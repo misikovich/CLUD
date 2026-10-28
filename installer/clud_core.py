@@ -130,6 +130,7 @@ class Reporter:
 
     def step(self, index: int, total: int, title: str) -> None: ...
     def progress(self, done: int, total: int) -> None: ...
+    def files(self, done: int, total: int) -> None: ...
     def log(self, message: str) -> None: ...
 
 
@@ -762,15 +763,18 @@ def _install_python(archive: Path, dest: Path, stdlib: str, skip: tuple[str, ...
         files = _files(py)
         total = sum(f.stat().st_size for f in files)
         done, last = 0, 0.0
+        report.files(0, len(files))
         with _ParallelWriter() as writer:
-            for f in files:
+            for i, f in enumerate(files, 1):
                 out = dest / f.relative_to(py)
                 out.parent.mkdir(parents=True, exist_ok=True)
                 writer.copy(str(f), str(out))
                 done += f.stat().st_size
                 if time.monotonic() - last > 0.1:
                     last = time.monotonic()
+                    report.files(i, len(files))
                     report.progress(done, total)
+        report.files(len(files), len(files))
         report.progress(total, total)
 
 

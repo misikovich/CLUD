@@ -41,20 +41,29 @@ BANNER = """\
 ACCENT = "#D97757"
 
 
+def files_text(done: int, total: int) -> str:
+    return f"{done:,} / {total:,} files copied, {total - done:,} left"
+
+
 # --- CLI mode ---------------------------------------------------------------------------
 
 class PrintReporter(core.Reporter):
     def __init__(self) -> None:
         self._last = 0.0
+        self._files = ""
 
     def step(self, index: int, total: int, title: str) -> None:
-        pass  # install() logs the step title itself
+        self._files = ""  # install() logs the step title itself; just drop the last file count
 
     def progress(self, done: int, total: int) -> None:
         now = time.monotonic()
         if total and (now - self._last > 1 or done >= total):
             self._last = now
-            print(f"    {done * 100 // total:3d}%  {core.human(done)} / {core.human(total)}", flush=True)
+            print(f"    {done * 100 // total:3d}%  {core.human(done)} / {core.human(total)}{self._files}",
+                  flush=True)
+
+    def files(self, done: int, total: int) -> None:
+        self._files = f", {files_text(done, total)}"
 
     def log(self, message: str) -> None:
         print(message, flush=True)
@@ -350,6 +359,9 @@ def run_tui(show_all: bool) -> int:
                 self._last = now
                 self.screen.app.call_from_thread(self.screen.set_progress, done, total)
 
+        def files(self, done: int, total: int) -> None:
+            self.screen.app.call_from_thread(self.screen.set_files, done, total)
+
         def log(self, message: str) -> None:
             self.screen.app.call_from_thread(self.screen.write_log, message)
 
@@ -372,6 +384,7 @@ def run_tui(show_all: bool) -> int:
                 yield ProgressBar(id="overall", show_eta=False)
                 yield Static("Starting…", id="step")
                 yield ProgressBar(id="current", show_eta=False)
+                yield Static("", id="files", classes="muted")
                 yield RichLog(id="log", wrap=True, markup=False)
                 yield Static("", id="result")
                 with Horizontal(id="buttons"):
@@ -385,6 +398,10 @@ def run_tui(show_all: bool) -> int:
             self.query_one("#overall", ProgressBar).update(total=total, progress=index)
             self.query_one("#step", Static).update(f"[b]{title}[/b]")
             self.query_one("#current", ProgressBar).update(total=None, progress=0)
+            self.query_one("#files", Static).update("")
+
+        def set_files(self, done: int, total: int) -> None:
+            self.query_one("#files", Static).update(files_text(done, total))
 
         def write_log(self, message: str) -> None:
             self.query_one(RichLog).write(message)
@@ -463,7 +480,7 @@ def run_tui(show_all: bool) -> int:
         #notes {{ margin: 0 0 1 0; }}
         #buttons {{ height: auto; margin-top: 1; }}
         #buttons Button {{ margin-right: 2; }}
-        #overall, #current {{ margin-bottom: 1; }}
+        #overall, #files {{ margin-bottom: 1; }}
         #log {{ height: 1fr; border: round $panel; }}
         #result {{ margin-top: 1; }}
         ProgressBar Bar > .bar--bar, ProgressBar Bar > .bar--complete {{ color: {ACCENT}; }}
