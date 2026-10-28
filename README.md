@@ -22,8 +22,8 @@ memory travel with the stick, across both systems.
      `CLUD-Installer.ps1` directly.
    - **macOS / Linux:** run `./CLUD-Installer.sh` in a terminal
 3. **Pick your USB drive, tick the platforms you want and press Install.** With all three
-   (Windows, Linux ARM64 for the Raspberry Pi, Linux x64) about 1.6 GB gets downloaded and
-   written; Windows alone is about 900 MB, each Linux build about 350 MB.
+   (Windows, Linux ARM64 for the Raspberry Pi, Linux x64) about 1.1 GB gets written to the
+   stick; Windows alone is about 430 MB, each Linux build about 340 MB.
 4. **Plug the stick in and start CLUD.** The first time, follow the prompts to sign in. The
    login is saved on the stick and works on Windows and Linux alike.
    - **Windows:** double-click **`CLUD.exe`**.
@@ -41,9 +41,8 @@ the scripts. Nothing is installed system-wide, and later runs start in a second 
 
 | Folder | What | Size |
 |---|---|---|
-| `app\` | Claude Code (native `claude.exe`) | ~257 MB |
-| `git\` | Git for Windows: `git` plus the `bash.exe` Claude Code needs on Windows | ~400 MB |
-| `py\` | Standalone Python 3.13 with [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) for computer use | ~195 MB |
+| `app\` | Claude Code (native `claude.exe`) | ~285 MB |
+| `py\` | Standalone Python 3.13 with [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) for computer use | ~140 MB |
 | `config\` | Your Claude Code settings, history, memory and login | small |
 | `work\` | Claude's notes and scratch files | small |
 | `linux-arm64/` | Claude Code + Python with CLUD's computer-use server, for 64-bit ARM Linux (Raspberry Pi) | ~340 MB |
@@ -159,8 +158,9 @@ stick/                     files copied onto the stick as-is
   mcp/clud_desktop.py      computer-use server for Linux (Wayland/wlroots and X11)
   autorun.inf, clud.ico    drive name and icon
 launcher/                  dev tools (Windows): CLUD.exe source, icon generator
-tests/                     test VMs: Linux installer (Mac), Windows on Arm (Mac),
-                           Raspberry Pi OS (Linux host); mcp_probe.py drives clud_desktop.py
+tests/                     test VMs: Linux installer (Mac), Windows 11 (Arm on a Mac, x64
+                           on a Linux host), Raspberry Pi OS (Linux host); mcp_probe.py
+                           drives clud_desktop.py
 docs/                      README images
 ```
 
@@ -175,7 +175,6 @@ included in this repo.
 
 - [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) by Anthropic, under
   Anthropic's terms. Using it needs a Claude account.
-- [Git for Windows](https://gitforwindows.org/), GPLv2
 - [python-build-standalone](https://github.com/astral-sh/python-build-standalone), Python
   Software Foundation License and others
 - [Windows-MCP](https://github.com/CursorTouch/Windows-MCP), MIT. Its anonymous telemetry is

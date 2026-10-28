@@ -3,11 +3,14 @@
 The stick carries a build for each platform picked (see PLATFORMS). Everything is fetched
 as plain archives, so the stick can be built from Windows, macOS or Linux alike:
   - Claude Code: the native binary for each platform straight from the npm registry
-  - Windows: Git for Windows, the full .tar.bz2 build (git + the bash.exe Claude needs)
-  - Python: python-build-standalone 3.13 per platform, relocatable, no venv
+  - Python: python-build-standalone 3.13 per platform, relocatable, no venv. Its standard
+    library and the pure-Python packages are packed into zips it imports from (see
+    _pack_python), as a stick takes far longer to write thousands of small files than a
+    few big ones.
   - Computer use: Windows-MCP on Windows; on Linux CLUD's own mcp/clud_desktop.py, whose
     dependencies (Pillow, python-xlib) go into that platform's Python. Installed with uv,
     targeting the stick's platform rather than the one the installer runs on.
+No Git for Windows: without it Claude Code uses its PowerShell tool for commands.
 
 Linux binaries are named *.exe on purpose: Linux mounts FAT32 sticks with "showexec",
 which only lets files ending in .exe/.com/.bat run.
@@ -18,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import py_compile
 import re
 import shutil
 import ssl
@@ -29,6 +33,7 @@ import tempfile
 import time
 import threading
 import urllib.request
+import zipfile
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -51,7 +56,7 @@ class Platform:
 
 
 PLATFORMS = (
-    Platform("windows", "Windows (64-bit PC)", ("app", "git", "py"), 900 * 1024**2),
+    Platform("windows", "Windows (64-bit PC)", ("app", "py"), 550 * 1024**2),
     Platform("linux-arm64", "Linux ARM64 (Raspberry Pi 3/4/5 with 64-bit Pi OS)", ("linux-arm64",),
              340 * 1024**2),
     Platform("linux-x64", "Linux x64 (64-bit PC: Ubuntu, Debian, Mint, Fedora, ...)", ("linux-x64",),
@@ -70,33 +75,26 @@ def needed_bytes(platforms) -> int:
 NEEDED_BYTES = needed_bytes(PLATFORM_KEYS)
 
 # Folders the installer owns and replaces wholesale on update. "node" and ".npm-cache"
-# are from the old npm-based layout and are removed when found.
+# are from the old npm-based layout, "git" from when sticks carried Git for Windows; they're
+# removed when found.
 MANAGED_DIRS = tuple(d for p in PLATFORMS for d in p.dirs)
-LEGACY_DIRS = ("node", ".npm-cache")
+LEGACY_DIRS = ("node", ".npm-cache", "git")
 STAGING = ".clud-new"
 RETIRED = ".clud-old"
 # Hidden on Windows and macOS (Linux file managers ignore the FAT hidden flag)
 HIDDEN = MANAGED_DIRS + ("mcp", "CLUD.cmd", "CLUD.sh", "autorun.inf", "clud.ico", "clud-version.json")
 
-# Parts of Git for Windows that Claude never uses: docs, Vim's runtime, timezone data and
-# Tcl/Tk for the gitk / git gui GUIs. Every file written to a stick costs ~20-40 ms (more
-# on macOS), so these ~6,500 small files are minutes of install time. Newer builds use
-# ucrt64\ where older ones had mingw64\.
-GIT_SKIP = ("usr/share/doc/", "usr/share/man/", "usr/share/info/", "usr/share/gtk-doc/",
-            "usr/share/vim/") + tuple(
-    f"{prefix}/{sub}" for prefix in ("mingw64", "ucrt64")
-    for sub in ("share/doc/", "share/gtk-doc/", "doc/", "share/zoneinfo/", "lib/tcl8.6/",
-                "lib/tk8.6/", "share/git-gui/"))
-
-# Same for Python: Tcl/Tk for tkinter, IDLE, demos, and C headers (~1,650 files)
-PY_SKIP = ("tcl/", "include/", "Lib/idlelib/", "Lib/turtledemo/")
-# Linux Python: also terminfo (~2,900 files), pip, and every bin/ entry but the interpreter
+# Parts of Python CLUD never uses: Tcl/Tk for tkinter, IDLE, demos, C headers and import
+# libraries, pip, and precompiled caches (_pack_python compiles its own)
+PY_SKIP = ("tcl/", "include/", "libs/", "Lib/idlelib/", "Lib/turtledemo/", "Lib/tkinter/",
+           "Lib/ensurepip/", "Lib/site-packages/", "Lib/__pycache__/")
+# Linux Python: also terminfo (~2,900 files), and every bin/ entry but the interpreter
 # itself (the rest are symlinks, which FAT would turn into 22 MB copies)
 PY_LINUX_SKIP = ("include/", "share/", "lib/tcl", "lib/tk", "lib/itcl", "lib/thread", "lib/libtcl",
                  "lib/libpython", "lib/pkgconfig/", "lib/python3.13/idlelib/", "lib/python3.13/turtledemo/",
-                 "lib/python3.13/tkinter/", "lib/python3.13/ensurepip/", "lib/python3.13/site-packages/pip",
-                 "lib/python3.13/config-3.13", "bin/python3-", "bin/python3.13-", "bin/pip", "bin/idle",
-                 "bin/pydoc", "bin/python3", "bin/python")
+                 "lib/python3.13/tkinter/", "lib/python3.13/ensurepip/", "lib/python3.13/site-packages/",
+                 "lib/python3.13/config-3.13", "lib/python3.13/__pycache__/", "bin/python3-",
+                 "bin/python3.13-", "bin/pip", "bin/idle", "bin/pydoc", "bin/python3", "bin/python")
 LINUX_PY_BIN = "bin/python3.13"
 
 _SSL = ssl.create_default_context(cafile=certifi.where())
@@ -223,8 +221,6 @@ def human(n: float) -> str:
 class Sources:
     claude_version: str
     claude_urls: dict[str, str]  # platform key -> npm tarball
-    git_version: str
-    git_url: str
     python_version: str
     python_urls: dict[str, str]  # platform key -> python-build-standalone archive
 
@@ -233,14 +229,6 @@ def _get_json(url: str):
     req = urllib.request.Request(url, headers={"User-Agent": "clud-installer", "Accept": "application/json"})
     with urllib.request.urlopen(req, context=_SSL, timeout=30) as r:
         return json.load(r)
-
-
-def _github_asset(repo: str, pattern: str) -> tuple[str, str]:
-    rel = _get_json(f"https://api.github.com/repos/{repo}/releases/latest")
-    for asset in rel["assets"]:
-        if re.fullmatch(pattern, asset["name"]):
-            return asset["name"], asset["browser_download_url"]
-    raise RuntimeError(f"No asset matching {pattern} in the latest {repo} release")
 
 
 # npm package suffix and python-build-standalone target per platform
@@ -256,7 +244,6 @@ def resolve_sources() -> Sources:
         key: _get_json(f"https://registry.npmjs.org/@anthropic-ai/claude-code-{npm}/{claude}")["dist"]["tarball"]
         for key, npm in NPM_PLATFORM.items()
     }
-    git_name, git_url = _github_asset("git-for-windows/git", r"Git-[\d.]+-64-bit\.tar\.bz2")
     rel = _get_json("https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest")
     python_urls, py_version = {}, ""
     for key, target in PY_TARGET.items():
@@ -271,8 +258,6 @@ def resolve_sources() -> Sources:
     return Sources(
         claude_version=claude,
         claude_urls=claude_urls,
-        git_version=re.search(r"Git-([\d.]+)-64-bit", git_name).group(1),
-        git_url=git_url,
         python_version=py_version,
         python_urls=python_urls,
     )
@@ -552,8 +537,7 @@ def steps(platforms) -> list[str]:
             out.append(f"Downloading for {p.title.split(' (')[0]}")
     for p in PLATFORMS:
         if p.key == "windows" and p.key in platforms:
-            out += ["Installing Claude Code for Windows", "Installing Git for Windows",
-                    "Installing Python for Windows", "Installing Windows-MCP (computer use)"]
+            out += ["Installing Claude Code for Windows", "Installing Python + Windows-MCP (computer use)"]
         elif p.key in platforms:
             name = p.title.split(" (")[0]
             out += [f"Installing Claude Code for {name}", f"Installing Python + computer use for {name}"]
@@ -561,22 +545,150 @@ def steps(platforms) -> list[str]:
 
 
 def _pip_install(packages: list[str], target: Path, py_target: str, what: str) -> None:
-    """pip-install packages for the stick's platform (not this computer's) into target."""
-    # Install into a local folder, then copy over: on FAT/exFAT macOS litters the target
-    # with ._ AppleDouble files mid-install, which uv then rejects as not in the wheel.
+    """pip-install packages for the stick's platform (not this computer's) into target, a
+    folder on this computer: on FAT/exFAT macOS would litter it with ._ AppleDouble files
+    mid-install, which uv then rejects as not in the wheel."""
     # --link-mode copy: uv would otherwise hardlink from its cache when the target is on the
     # same disk, sharing files (like psutil's .pyd) with this very process and making them
     # undeletable on the next update
-    with tempfile.TemporaryDirectory(prefix="clud-pip-") as tmp:
-        cmd = [_uv(), "pip", "install", "--quiet", "--link-mode", "copy", "--target", tmp,
-               "--python-platform", py_target, "--python-version", "3.13", *packages]
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"Installing {what} failed:\n{r.stderr.strip()}")
-        # Test suites and type stubs are ~1,200 files that are never loaded at runtime
+    cmd = [_uv(), "pip", "install", "--quiet", "--link-mode", "copy", "--target", str(target),
+           "--python-platform", py_target, "--python-version", "3.13", *packages]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"Installing {what} failed:\n{r.stderr.strip()}")
+    # Test suites, demos and type stubs are ~1,700 files that are never loaded at runtime
+    for root, dirs, files in os.walk(target):
+        for d in [d for d in dirs if d in PIP_DROP]:
+            _rmtree(Path(root) / d)
+            dirs.remove(d)
+        for f in files:
+            if f.endswith(".pyi"):
+                os.unlink(Path(root) / f)
+
+
+# Python imports straight from zip files, so the stick's Python keeps its standard library
+# in the zip it looks for by default (python313.zip next to python.exe on Windows,
+# lib/python313.zip on Linux) and pure-Python packages in another, put on sys.path by a .pth
+# file. ~5,000 small files become two big ones. Each .py gets an unchecked-hash .pyc next to
+# it in the zip, as Python can't cache bytecode for zipped code itself.
+STDLIB_ZIP = {"Lib": "python313.zip", "lib/python3.13": "lib/python313.zip"}
+SITE_ZIP = "clud-packages"
+# Stays loose: os.py marks where the standard library is (Python looks for it to find its own
+# home), lib-dynload holds native modules
+STDLIB_LOOSE = ("os.py", "site-packages", "lib-dynload")
+# Packages that need real files: comtypes and win32com generate code into their own folder
+# (Windows-MCP's UI Automation wrappers), certifi hands its CA file to OpenSSL by path
+SITE_LOOSE = {"comtypes", "win32com", "certifi"}
+# Package files that are fine inside a zip (data among them read with importlib.resources,
+# which reads zips too); anything else, mostly native code, keeps its package loose
+ZIPPABLE = (".py", ".typed", ".md", ".txt", ".rst", ".json", ".yaml", ".js")
+SITE_DROP = {"bin", "Scripts", "__pycache__", "PyWin32.chm"}
+PIP_DROP = {"tests", "test", "Demos", "demos", "benchmarks"}
+
+
+def _pack_python(py: Path, stdlib: str) -> None:
+    """Move the standard library and pure-Python packages of the Python in py into zips."""
+    lib = py / stdlib
+    site = lib / "site-packages"
+    _zip_files(py / STDLIB_ZIP[stdlib], lib,
+               [f for f in _files(lib) if f.relative_to(lib).parts[0] not in STDLIB_LOOSE],
+               keep={lib / "os.py"})
+
+    for name in SITE_DROP:
+        if (site / name).is_dir():
+            _rmtree(site / name)
+        else:
+            (site / name).unlink(missing_ok=True)
+    _rmtree(py / "Scripts")  # empty: pip isn't installed
+    # Modules that .pth files import run before every other .pth is read
+    pth_imports = {line.split()[1].rstrip(";") for pth in site.glob("*.pth")
+                   for line in pth.read_text(encoding="utf-8", errors="replace").splitlines()
+                   if line.startswith("import ") and len(line.split()) > 1}
+    zipped: list[Path] = []
+    for entry in site.iterdir():
+        if entry.is_file():
+            if entry.suffix == ".py" and entry.stem not in pth_imports:
+                zipped.append(entry)
+        elif entry.name.endswith(".dist-info"):
+            zipped += _files(entry)
+        elif entry.name not in SITE_LOOSE:
+            files = _files(entry)
+            if all(f.suffix in ZIPPABLE or f.name.startswith(("LICENSE", "COPYING")) for f in files):
+                zipped += files
+    _zip_files(site / f"{SITE_ZIP}.zip", site, zipped)
+    (site / f"{SITE_ZIP}.pth").write_text(f"{SITE_ZIP}.zip\n", encoding="utf-8")
+    # comtypes creates its comtypes.gen package on first use, then fails to import it
+    # (Python's import cache misses the new folder), so a fresh stick's first Windows-MCP
+    # start crashed. Ship the package ready-made.
+    if (site / "comtypes").is_dir():
+        (site / "comtypes" / "gen").mkdir(exist_ok=True)
+        (site / "comtypes" / "gen" / "__init__.py").write_text(
+            "# comtypes.gen package, directory for generated files.\n", encoding="utf-8")
+
+
+def _files(folder: Path) -> list[Path]:
+    return [Path(root) / f for root, dirs, files in os.walk(folder)
+            if "__pycache__" not in Path(root).parts for f in files]
+
+
+def _zip_files(archive: Path, base: Path, files: list[Path], keep=frozenset()) -> None:
+    """Move files (paths under base) into a new zip, compiling .py files on the way."""
+    compile_pyc = sys.version_info[:2] == (3, 13)  # the bytecode has to match the stick's Python
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Folder entries too: zipimport only finds namespace packages (no __init__.py, like
+        # opentelemetry) by them
+        for d in sorted({p for f in files for p in f.relative_to(base).parents if p.name}):
+            zf.mkdir(d.as_posix())
+        for f in sorted(files):
+            arcname = f.relative_to(base).as_posix()
+            zf.write(f, arcname)
+            if compile_pyc and f.suffix == ".py":
+                pyc = f.with_suffix(".pyc.tmp")
+                try:
+                    py_compile.compile(str(f), cfile=str(pyc), dfile=arcname, doraise=True,
+                                       invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+                    zf.write(pyc, arcname[:-3] + ".pyc")
+                except py_compile.PyCompileError:
+                    pass  # not valid Python 3.13 (stray templates and the like); never imported
+                finally:
+                    pyc.unlink(missing_ok=True)
+            if f not in keep:
+                f.unlink()
+    for root, dirs, _ in os.walk(base, topdown=False):
+        for d in dirs:
+            try:
+                (Path(root) / d).rmdir()
+            except OSError:
+                pass  # not empty
+
+
+def _install_python(archive: Path, dest: Path, stdlib: str, skip: tuple[str, ...], keep: tuple[str, ...],
+                    packages: list[str], py_target: str, what: str, report: Reporter) -> None:
+    """Put a python-build-standalone Python with packages at dest, packed (see _pack_python).
+
+    It's put together on this computer first, then copied over in one go.
+    """
+    with tempfile.TemporaryDirectory(prefix="clud-py-") as tmp:
+        py = Path(tmp) / "py"
+        _extract_tar(archive, py, report, strip=1, skip=skip, keep=keep)
+        if LINUX_PY_BIN in keep:
+            (py / LINUX_PY_BIN).rename(py / "bin" / "python3.exe")
+        report.progress(0, 0)
+        _pip_install(packages, py / stdlib / "site-packages", py_target, what)
+        _pack_python(py, stdlib)
+        files = _files(py)
+        total = sum(f.stat().st_size for f in files)
+        done, last = 0, 0.0
         with _ParallelWriter() as writer:
-            shutil.copytree(tmp, target, copy_function=writer.copy, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns("tests", "*.pyi", "__pycache__"))
+            for f in files:
+                out = dest / f.relative_to(py)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                writer.copy(str(f), str(out))
+                done += f.stat().st_size
+                if time.monotonic() - last > 0.1:
+                    last = time.monotonic()
+                    report.progress(done, total)
+        report.progress(total, total)
 
 
 def install(target: Path, src: Sources, rename: bool, report: Reporter,
@@ -608,8 +720,6 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
         next_step()
         archives[key] = {"claude": _download(src.claude_urls[key], report),
                          "python": _download(src.python_urls[key], report)}
-        if key == "windows":
-            archives[key]["git"] = _download(src.git_url, report)
 
     # Build the new folders side by side in a staging folder on the drive and only swap
     # them in once all are complete, so a failure (or a yanked stick) mid-way leaves the
@@ -627,18 +737,9 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
                 raise RuntimeError("claude.exe was not in the Claude Code package")
 
             next_step()
-            _extract_tar(a["git"], stage / "git", report, skip=GIT_SKIP)
-            if not (stage / "git" / "bin" / "bash.exe").exists():
-                raise RuntimeError("bash.exe missing after extracting Git for Windows")
-
-            next_step()
-            _extract_tar(a["python"], stage / "py", report, strip=1, skip=PY_SKIP)
-
-            next_step()
-            report.progress(0, 0)
-            _pip_install(["windows-mcp"], stage / "py" / "Lib" / "site-packages", PY_TARGET[key],
-                         "Windows-MCP")
-            report.log("Windows-MCP installed")
+            _install_python(a["python"], stage / "py", "Lib", PY_SKIP, (), ["windows-mcp"],
+                            PY_TARGET[key], "Windows-MCP", report)
+            report.log("Python + Windows-MCP installed")
         else:
             out = stage / key
             next_step()
@@ -649,13 +750,9 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
             _make_executable(out / "claude.exe")
 
             next_step()
-            _extract_tar(a["python"], out / "py", report, strip=1,
-                         skip=PY_LINUX_SKIP, keep=(LINUX_PY_BIN,))
-            (out / "py" / LINUX_PY_BIN).rename(out / "py" / "bin" / "python3.exe")
+            _install_python(a["python"], out / "py", "lib/python3.13", PY_LINUX_SKIP, (LINUX_PY_BIN,),
+                            ["pillow", "python-xlib"], PY_TARGET[key], "computer use for Linux", report)
             _make_executable(out / "py" / "bin" / "python3.exe")
-            report.progress(0, 0)
-            _pip_install(["pillow", "python-xlib"], out / "py" / "lib" / "python3.13" / "site-packages",
-                         PY_TARGET[key], "computer use for Linux")
             report.log(f"Python + computer use for {key} installed")
 
     next_step()
@@ -715,7 +812,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
     version_file = target / "clud-version.json"
     _unhide(version_file)
     version_file.write_text(json.dumps({
-        "claude": src.claude_version, "git": src.git_version if "windows" in platforms else None,
+        "claude": src.claude_version,
         "python": src.python_version, "platforms": platforms, "installed": time.strftime("%Y-%m-%d"),
     }, indent=2))
 

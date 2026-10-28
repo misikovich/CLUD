@@ -21,7 +21,6 @@ Update:  run the CLUD Installer again and pick this drive. Your login,
          settings and work\ folder are kept.
 
 Layout:  app\          Claude Code for Windows (claude.exe)
-         git\          Git for Windows (Claude Code needs its bash.exe)
          py\           Python 3.13 with Windows-MCP (computer use on Windows)
          linux-arm64\  Claude Code + Python for 64-bit ARM Linux (Raspberry Pi)
          linux-x64\    Claude Code + Python for 64-bit x86 Linux

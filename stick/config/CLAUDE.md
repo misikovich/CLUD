@@ -6,8 +6,9 @@
   `/media/<user>/CLUD` on Linux). Your binaries, settings, memory and login live there.
 - The same stick works on **Windows** and on **Linux** (including Raspberry Pi OS), so
   check which one you're on before anything else.
-  - Windows: Claude Code is in `app\`, with Git for Windows (`git`, Git Bash) in `git\` and
-    Python 3.13 in `py\`, all on your PATH.
+  - Windows: Claude Code is in `app\` and Python 3.13 in `py\`, both on your PATH. There is
+    no Git Bash on the stick: your shell is PowerShell, unless the host has Git for Windows
+    installed. `git` is only there if the host has it.
   - Linux: Claude Code and its Python live in `linux-x64/` or `linux-arm64/` (the files end
     in `.exe` so FAT32 sticks let Linux run them; they're normal Linux programs). Use the
     host's own shell tools; `git` and `python3` are usually installed but not guaranteed.
