@@ -2,17 +2,24 @@
 it returns. Used by tests/pi-vm.sh; runnable by hand too:
 
     python3 mcp_probe.py OUTDIR PYTHON SERVER.py [TOOL JSON-ARGS]...
+    python3 mcp_probe.py OUTDIR --cmd "COMMAND LINE" [TOOL JSON-ARGS]...   (any stdio server)
 With no tool calls it runs a short smoke test: Status, Screenshot, Move, Shortcut, Type.
 """
 import base64
 import json
 import os
+import shlex
 import subprocess
 import sys
 
+sys.stdout.reconfigure(errors="replace")  # Windows consoles can't print every character
 out_dir, python, server, *calls = sys.argv[1:]
 os.makedirs(out_dir, exist_ok=True)
-p = subprocess.Popen([python, "-I", "-B", server], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+if python == "--cmd":
+    argv = server if os.name == "nt" else shlex.split(server)
+else:
+    argv = [python, "-I", "-B", server]
+p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
 n = 0
 
 
@@ -26,7 +33,13 @@ def rpc(method, params=None, notify=False):
     p.stdin.flush()
     if notify:
         return None
-    reply = json.loads(p.stdout.readline())
+    while True:  # skip the server's own notifications and log messages
+        line = p.stdout.readline()
+        if not line:
+            raise SystemExit(f"{method}: the server exited")
+        reply = json.loads(line)
+        if reply.get("id") == n:
+            break
     if "error" in reply:
         raise SystemExit(f"{method}: {reply['error']}")
     return reply["result"]

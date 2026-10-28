@@ -88,7 +88,7 @@ def run_cli(args: argparse.Namespace) -> int:
         platforms += keys
     print("Looking up the latest versions...")
     src = core.resolve_sources()
-    print(f"Claude Code {src.claude_version}, Git {src.git_version}, Python {src.python_version}")
+    print(f"Claude Code {src.claude_version}, Python {src.python_version}")
     print("Platforms:", ", ".join(k for k in core.PLATFORM_KEYS if k in platforms))
     notes = core.install(target, src, rename=not args.no_rename, report=PrintReporter(), platforms=platforms)
     for note in notes:
@@ -292,7 +292,7 @@ def run_tui(show_all: bool) -> int:
         def lookup_done(self, src: core.Sources) -> None:
             self.sources = src
             self.query_one("#versions", Static).update(
-                f"Claude Code [b]{src.claude_version}[/b] · Git for Windows [b]{src.git_version}[/b] · "
+                f"Claude Code [b]{src.claude_version}[/b] · "
                 f"Python [b]{src.python_version}[/b] + computer use"
             )
             self.update_space()

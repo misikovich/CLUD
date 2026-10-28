@@ -5,9 +5,10 @@ set "USB=%~dp0"
 set "USB=%USB:~0,-1%"
 set "CLUD_HOME=%USB%"
 
-set "PATH=%USB%\app;%USB%\mcp;%USB%\git\cmd;%USB%\git\usr\bin;%USB%\py;%USB%\py\Scripts;%PATH%"
+set "PATH=%USB%\app;%USB%\mcp;%USB%\py;%PATH%"
 set "CLAUDE_CONFIG_DIR=%USB%\config"
-set "CLAUDE_CODE_GIT_BASH_PATH=%USB%\git\bin\bash.exe"
+rem No Git Bash on the stick: Claude Code runs commands with its PowerShell tool (or with the
+rem host's Git Bash, if Git for Windows is installed there)
 rem Self-updates would install onto the host PC; update the stick with the CLUD Installer instead
 set "DISABLE_AUTOUPDATER=1"
 rem Python on an SD card can be slow to cold-start; give the computer-use server time

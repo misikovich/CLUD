@@ -154,7 +154,7 @@ grep -q "$mnt" /tmp/list.txt || fail "the stick ($mnt) isn't in --list"
 echo "== Fresh install to $mnt"
 ./CLUD-Installer.sh --target "$mnt" --yes
 for f in CLUD.exe CLUD.cmd autorun.inf clud.ico clud-version.json app/claude.exe \
-         git/bin/bash.exe py/python.exe config/CLAUDE.md mcp/windows-mcp.cmd mcp/windows-mcp.json \
+         py/python.exe config/CLAUDE.md mcp/windows-mcp.cmd mcp/windows-mcp.json \
          CLUD.sh CLUD.desktop mcp/clud_desktop.py linux-arm64/claude.exe linux-arm64/py/bin/python3.exe \
          linux-x64/claude.exe linux-x64/py/bin/python3.exe; do
     [ -e "$mnt/$f" ] || fail "$f missing on the stick"
