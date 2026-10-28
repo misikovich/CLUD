@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "windows-mcp": {
+      "type": "stdio",
+      "command": "${CLUD_HOME}\\py\\python.exe",
+      "args": ["-m", "windows_mcp", "serve"],
+      "env": {
+        "ANONYMIZED_TELEMETRY": "false",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      }
+    }
+  }
+}

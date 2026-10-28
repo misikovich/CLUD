@@ -1,0 +1,8 @@
+# CLUD's settings for omp, passed with --config on every start. They win over omp's own
+# settings in config/omp/config.yml, so change those for anything else.
+startup:
+  # Updates would install onto the host; update the stick with the CLUD Installer instead
+  checkUpdate: false
+mcp:
+  # Python on an SD card or slow stick can take a while to cold-start
+  startupTimeoutMs: 120000
