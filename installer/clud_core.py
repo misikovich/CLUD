@@ -463,6 +463,16 @@ def _rmtree(path: Path) -> None:
         shutil.rmtree(path, onexc=force)
 
 
+def _flush_deletes() -> None:
+    """Write pending deletions out to the drive before anything new reuses their space.
+
+    Linux's exFAT driver can otherwise write a deleted folder's stale data over the next
+    file put in its place: on Linux 7.3, CLUD.cmd came out as all zeros after an install.
+    """
+    if hasattr(os, "sync"):
+        os.sync()
+
+
 def running_from(target: Path) -> list[str]:
     """Names of processes whose executable lives on target (CLUD, its MCP server, ...)."""
     root = os.path.normcase(os.path.realpath(target)).rstrip("\\/") + os.sep
@@ -726,6 +736,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
     # previous CLUD working.
     stage = target / STAGING
     _rmtree(stage)
+    _flush_deletes()
     stage.mkdir()
 
     for key in platforms:
@@ -790,6 +801,7 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
         if (target / d).exists() and (target / "CLUD.cmd").exists():
             report.log(f"Removing old {d}\\ (no longer used)")
             _rmtree(target / d)
+    _flush_deletes()
 
     next_step()
     for path in sorted(STICK_FILES.rglob("*")):
