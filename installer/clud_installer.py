@@ -77,14 +77,14 @@ def draw_rig(lines: list[str], width: int, height: int, writing: bool, tick: int
         if y == 0:
             row.append("╭" + "─" * (mon_w - 2) + "╮", frame)
         elif y == 1:
-            row.append("│ ┌" + "─" * (mon_w - 6) + "┐ │", frame)
+            row.append("│" + " " * (mon_w - 2) + "│", frame)
         elif y < rows + 2:
             i = y - 2
-            row.append("│ │ ", frame)
+            row.append("│   ", frame)
             row.append(shown[i].ljust(inner), "bold" if i == rows - 1 else "")
-            row.append(" │ " + ("├" if y == mid else "│"), frame)
+            row.append("   " + ("├" if y == mid else "│"), frame)
         elif y == rows + 2:
-            row.append("│ └" + "─" * (mon_w - 6) + "┘ │", frame)
+            row.append("│" + " " * (mon_w - 2) + "│", frame)
         else:
             row.append("╰" + "─" * (mon_w - 2) + "╯", frame)
         row.pad_right(mon_w - row.cell_len)
@@ -216,15 +216,14 @@ Button, Button:focus, Button:hover, Button.-active, Button:disabled {
     border: none !important; height: 1; min-width: 12; margin-right: 2;
 }
 Checkbox, Checkbox:focus, Checkbox:hover { border: none !important; padding: 0 1; }
-Checkbox:focus { text-style: reverse; }
-FooterKey.-command-palette { border-left: outer $foreground 20%; }
+Checkbox:focus > .toggle--label { text-style: reverse; }
 #bar { margin-bottom: 0; }
 #quit { margin-top: 2; }
 """
 
 
 def run_tui(show_all: bool) -> int:
-    from textual import work
+    from textual import events, work
     from textual.app import App, ComposeResult
     from rich.text import Text
     from textual.binding import Binding
@@ -242,7 +241,15 @@ def run_tui(show_all: bool) -> int:
         BarRenderable.BAR = BarRenderable.HALF_BAR_LEFT = BarRenderable.HALF_BAR_RIGHT = "─"
         ScrollBarRender.VERTICAL_BARS = [" "] * 8
         ScrollBarRender.HORIZONTAL_BARS = [" "] * 8
-    header_icon = "C" if simple else None
+    # Checkboxes are a plain square: dark when off, orange when on (colors in the app CSS)
+    Checkbox.BUTTON_LEFT, Checkbox.BUTTON_RIGHT = "", " "
+    Checkbox.BUTTON_INNER = "■"
+
+    class FixedHeader(Header):
+        """Header that stays one line: clicking it doesn't expand it."""
+
+        def _on_click(self, event: events.Click) -> None:
+            event.prevent_default()
 
     class DriveScreen(Screen):
         BINDINGS = [
@@ -258,9 +265,9 @@ def run_tui(show_all: bool) -> int:
             self.drives: dict[str, core.Drive] = {}
 
         def compose(self) -> ComposeResult:
-            yield Header(icon=header_icon)
+            yield FixedHeader()
             yield Static(f"[{ACCENT}]{BANNER}[/]", id="banner")
-            yield Static("Portable Claude Code for Windows PCs and Linux, Raspberry Pi included. "
+            yield Static("Portable Agent for Your Stick. "
                          "Pick the drive to install it on.",
                          id="tagline")
             yield DataTable(id="drives", cursor_type="row", zebra_stripes=True)
@@ -295,7 +302,7 @@ def run_tui(show_all: bool) -> int:
                             "or press [b]a[/] to show every drive.")
             else:
                 hint.update(f"Needs about {core.human(core.NEEDED_BYTES)} free for every platform. "
-                            "Drives that already have CLUD get updated; your login and settings are kept.")
+                            "Drives that already have CLUD get updated.")
             table.focus()
 
         def action_toggle_all(self) -> None:
@@ -337,7 +344,7 @@ def run_tui(show_all: bool) -> int:
         def compose(self) -> ComposeResult:
             d = self.drive
             action = "Update CLUD on" if d.has_clud else "Install CLUD on"
-            yield Header(icon=header_icon)
+            yield FixedHeader()
             with VerticalScroll(id="confirm-box"):
                 yield Static(Content.from_markup("[b]$action $mount[/b]  $label", action=action, mount=str(d.mount),
                                                  label=d.label), id="title")
@@ -345,15 +352,13 @@ def run_tui(show_all: bool) -> int:
                 yield Static("Looking up the latest versions…", id="versions")
                 yield Static(
                     "• Other files on the drive are left alone.\n"
-                    "• Your CLUD login, settings, history and work\\ folder are kept.\n"
-                    "• CLUD runs with [b]--dangerously-skip-permissions[/b] (omp: [b]--auto-approve[/b]): "
-                    "on whatever PC it's plugged into, it acts without asking.",
+                    "• Your CLUD login, settings and history are kept.\n",
                     id="notes",
                 )
-                yield Static("Platforms to put on the stick:", classes="muted")
+                yield Static("Platforms to put on the drive:\n", classes="muted")
                 for p in core.PLATFORMS:
                     yield Checkbox(p.title, value=True, id=f"plat-{p.key}", classes="platform")
-                yield Static("Agents (with both, CLUD asks which to start):", classes="muted pick")
+                yield Static("Agents:\n", classes="muted pick")
                 # Updates keep the stick's agents unless changed here
                 agents = d.clud_agents if d.has_clud else core.DEFAULT_AGENTS
                 for a in core.AGENTS:
@@ -381,7 +386,7 @@ def run_tui(show_all: bool) -> int:
             need = core.needed_bytes(self.platforms(), self.agents())
             # An update frees the old version's space too, but only after building the new one
             ok = self.drive.free >= need
-            text = f"Needs about {core.human(need)} free; the drive has {core.human(self.drive.free)}."
+            text = f"\nNeeds about {core.human(need)} free; the drive has {core.human(self.drive.free)}."
             self.query_one("#space", Static).update(text if ok else f"[red]{text}[/]")
             self.query_one("#go", Button).disabled = not (ok and self.sources and need and self.agents())
 
@@ -462,7 +467,7 @@ def run_tui(show_all: bool) -> int:
             self.tick = 0
 
         def on_mount(self) -> None:
-            self.set_interval(0.15, self.animate)
+            self.set_interval(0.6, self.animate)
 
         def animate(self) -> None:
             if self.writing:
@@ -489,7 +494,7 @@ def run_tui(show_all: bool) -> int:
             self.finished = False
 
         def compose(self) -> ComposeResult:
-            yield Header(icon=header_icon)
+            yield FixedHeader()
             with Vertical(id="install-box"):
                 yield Rig(str(self.drive.mount), id="rig")
                 with Horizontal(id="progress-row"):
@@ -583,9 +588,10 @@ def run_tui(show_all: bool) -> int:
 
     class CludInstaller(App):
         TITLE = "CLUD Installer"
-        SUB_TITLE = "Claude + Chud = CLUD"
+        ENABLE_COMMAND_PALETTE = False
         CSS = f"""
         Screen {{ align-horizontal: center; }}
+        HeaderIcon, HeaderClockSpace {{ display: none; }}
         #banner {{ color: {ACCENT}; text-style: bold; width: auto; margin: 1 0 0 0; }}
         #tagline {{ width: auto; margin: 0 0 1 0; color: $text-muted; }}
         #drives {{ height: auto; max-height: 14; width: 100%; max-width: 110; }}
@@ -597,7 +603,9 @@ def run_tui(show_all: bool) -> int:
         #space {{ margin: 0 0 1 0; }}
         .pick {{ margin-top: 1; }}
         Checkbox.platform {{ border: none; height: 1; padding: 0 1; background: transparent; }}
-        Checkbox.platform:focus {{ text-style: reverse; }}
+        Checkbox.platform:focus > .toggle--label {{ text-style: reverse; }}
+        Checkbox > .toggle--button, Checkbox:focus > .toggle--button {{ color: #4a4a4a; background: transparent; }}
+        Checkbox.-on > .toggle--button, Checkbox.-on:focus > .toggle--button {{ color: {ACCENT}; }}
         #notes {{ margin: 0 0 1 0; }}
         #buttons {{ height: auto; margin-top: 1; }}
         #buttons Button {{ margin-right: 2; }}
