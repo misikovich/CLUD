@@ -1,12 +1,15 @@
-"""CLUD computer use for Linux: an MCP server (stdio) that sees and drives the desktop.
+"""CLUD computer use for Linux and macOS: an MCP server (stdio) that sees and drives the desktop.
 
-Started by CLUD.sh with the stick's own Python. Two backends, picked at startup:
+Started by CLUD.sh with the stick's own Python. On Linux, two backends, picked at startup:
   - Wayland compositors built on wlroots (labwc, the Raspberry Pi OS desktop; wayfire,
     sway, Hyprland, ...): talks the Wayland protocol directly, screenshots via
     wlr-screencopy, mouse and keyboard via the virtual-pointer / virtual-keyboard protocols.
   - X11 (any desktop on Xorg, including Raspberry Pi OS set to X11): XTest via python-xlib.
 GNOME and KDE on Wayland expose none of those protocols to ordinary programs, so there
 only screenshots work, through their own screenshot tools, if installed.
+On macOS: screenshots with the built-in screencapture, mouse and keyboard as CoreGraphics
+events (through ctypes). macOS only allows either once the user has given the terminal app
+CLUD runs in the Screen Recording and Accessibility permissions; the tools say so until then.
 
 The MCP protocol itself (JSON-RPC over stdin/stdout) is handled here too, to keep the
 dependencies to Pillow and python-xlib.
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import array
 import base64
+import ctypes
 import io
 import json
 import mmap
@@ -59,7 +63,8 @@ KEY_ALIASES = {
 MODIFIERS = {
     "shift": ("Shift_L", 1), "ctrl": ("Control_L", 4), "control": ("Control_L", 4),
     "alt": ("Alt_L", 8), "super": ("Super_L", 64), "win": ("Super_L", 64),
-    "meta": ("Super_L", 64), "cmd": ("Super_L", 64),
+    "meta": ("Super_L", 64), "cmd": ("Super_L", 64), "command": ("Super_L", 64),
+    "option": ("Alt_L", 8), "opt": ("Alt_L", 8),
 }
 CHAR_KEYSYMS = {"\n": "Return", "\t": "Tab", " ": "space"}
 
@@ -603,6 +608,264 @@ class X11Backend:
         p = self.root.query_pointer()
         return p.root_x, p.root_y
 
+# --- macOS ----------------------------------------------------------------------------------
+
+class CGPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+class CGSize(ctypes.Structure):
+    _fields_ = [("width", ctypes.c_double), ("height", ctypes.c_double)]
+
+
+class CGRect(ctypes.Structure):
+    _fields_ = [("origin", CGPoint), ("size", CGSize)]
+
+
+# Virtual keycodes by key position on a US keyboard. Apps read Cmd shortcuts through the
+# current layout, so these work on other layouts too.
+MAC_CHAR_CODES = {
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11,
+    "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21,
+    "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31,
+    "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
+    ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50, " ": 49,
+}
+MAC_SHIFTED = dict(zip('!@#$%^&*()_+{}|:"<>?~', "1234567890-=[]\\;',./`"))
+# X keysym names (what parse_combo returns) -> keycodes
+MAC_KEYCODES = {
+    "Return": 36, "Tab": 48, "space": 49, "BackSpace": 51, "Escape": 53, "Delete": 117,
+    "Insert": 114, "Home": 115, "End": 119, "Prior": 116, "Next": 121,
+    "Left": 123, "Right": 124, "Down": 125, "Up": 126, "Caps_Lock": 57,
+    "minus": 27, "equal": 24, "comma": 43, "period": 47, "slash": 44, "backslash": 42, "semicolon": 41,
+    "F1": 122, "F2": 120, "F3": 99, "F4": 118, "F5": 96, "F6": 97, "F7": 98, "F8": 100,
+    "F9": 101, "F10": 109, "F11": 103, "F12": 111, "F13": 105, "F14": 107, "F15": 113,
+    "F16": 106, "F17": 64, "F18": 79, "F19": 80, "F20": 90,
+    "Shift_L": 56, "Control_L": 59, "Alt_L": 58, "Super_L": 55,
+}
+# Modifier keysym -> CGEventFlags bit
+MAC_FLAGS = {"Shift_L": 0x20000, "Control_L": 0x40000, "Alt_L": 0x80000, "Super_L": 0x100000}
+# CGEventType per button: (down, up, dragged), and CGMouseButton
+MAC_BUTTONS = {"left": (1, 2, 6, 0), "right": (3, 4, 7, 1), "middle": (25, 26, 27, 2)}
+MAC_MOVED = 5
+HID_TAP = 0  # kCGHIDEventTap
+CLICK_STATE = 1  # kCGMouseEventClickState: 2 makes the second click of a pair a double-click
+
+
+class MacPermissionError(RuntimeError):
+    pass
+
+
+def _mac_app() -> str:
+    """The app macOS gives (or refuses) the permissions to: the terminal CLUD runs in."""
+    prog = os.environ.get("TERM_PROGRAM", "")
+    return {"Apple_Terminal": "Terminal", "iTerm.app": "iTerm", "vscode": "Visual Studio Code",
+            "WarpTerminal": "Warp"}.get(prog, prog or "the terminal app")
+
+
+class MacBackend:
+    name = "macos"
+
+    def __init__(self) -> None:
+        fw = "/System/Library/Frameworks/{0}.framework/{0}"
+        cg = self.cg = ctypes.CDLL(fw.format("CoreGraphics"))
+        self.cf = ctypes.CDLL(fw.format("CoreFoundation"))
+        self.ax = ctypes.CDLL(fw.format("ApplicationServices"))
+        vp, u32, b = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_bool
+        for fn, res, args in (
+            ("CGEventSourceCreate", vp, [ctypes.c_int32]),
+            ("CGEventCreate", vp, [vp]),
+            ("CGEventCreateMouseEvent", vp, [vp, u32, CGPoint, u32]),
+            ("CGEventCreateKeyboardEvent", vp, [vp, ctypes.c_uint16, b]),
+            # Not CGEventCreateScrollWheelEvent: ctypes can't call variadic functions on arm64
+            ("CGEventCreateScrollWheelEvent2", vp, [vp, u32, u32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]),
+            ("CGEventSetIntegerValueField", None, [vp, u32, ctypes.c_int64]),
+            ("CGEventSetFlags", None, [vp, ctypes.c_uint64]),
+            ("CGEventKeyboardSetUnicodeString", None, [vp, ctypes.c_ulong, ctypes.c_char_p]),
+            ("CGEventGetLocation", CGPoint, [vp]),
+            ("CGEventPost", None, [u32, vp]),
+            ("CGGetActiveDisplayList", ctypes.c_int32, [u32, ctypes.POINTER(u32), ctypes.POINTER(u32)]),
+            ("CGDisplayBounds", CGRect, [u32]),
+            ("CGPreflightScreenCaptureAccess", b, []),
+            ("CGRequestScreenCaptureAccess", b, []),
+            ("CGPreflightPostEventAccess", b, []),
+            ("CGRequestPostEventAccess", b, []),
+        ):
+            f = getattr(cg, fn)
+            f.restype, f.argtypes = res, args
+        self.cf.CFRelease.argtypes = [vp]
+        self.ax.AXIsProcessTrusted.restype = b
+        self.src = cg.CGEventSourceCreate(1)  # kCGEventSourceStateHIDSystemState
+        self.held = None  # button being held, so moves become drags
+        self.last_click = (0.0, None, 0, 0, 0)  # time, button, x, y, click count
+        self.asked: set[str] = set()
+
+    # permissions
+    def permissions(self) -> dict:
+        return {"screen_recording": bool(self.cg.CGPreflightScreenCaptureAccess()),
+                "accessibility": bool(self.cg.CGPreflightPostEventAccess() or self.ax.AXIsProcessTrusted())}
+
+    def _need(self, what: str) -> None:
+        if self.permissions()[what]:
+            return
+        app = _mac_app()
+        if what == "screen_recording":
+            pane, setting = "Privacy_ScreenCapture", "Screen & System Audio Recording"
+            after = f"then quit {app} (Cmd+Q) and start CLUD again"
+            request = self.cg.CGRequestScreenCaptureAccess
+        else:
+            pane, setting = "Privacy_Accessibility", "Accessibility"
+            after = "then try again"
+            request = self.cg.CGRequestPostEventAccess
+        if what not in self.asked:
+            self.asked.add(what)
+            request()  # macOS asks the user, once, and puts the app in the list
+        raise MacPermissionError(
+            f"macOS hasn't allowed {app} {setting}. Ask the user to turn on {app} in System Settings > "
+            f"Privacy & Security > {setting} (it may ask for their password), {after}. "
+            f"You can open that page for them: open 'x-apple.systempreferences:com.apple.preference.security?{pane}'")
+
+    # screen
+    def _displays(self) -> list[tuple[int, int, int, int]]:
+        ids, n = (ctypes.c_uint32 * 16)(), ctypes.c_uint32()
+        self.cg.CGGetActiveDisplayList(16, ids, ctypes.byref(n))
+        out = []
+        for i in range(n.value):
+            r = self.cg.CGDisplayBounds(ids[i])
+            out.append((round(r.origin.x), round(r.origin.y), round(r.size.width), round(r.size.height)))
+        if not out:
+            raise RuntimeError("no displays found (is the Mac asleep or the lid closed?)")
+        return out
+
+    def extent(self) -> tuple[int, int, int, int]:
+        # In points, the units of mouse events; the main display's top left is 0,0
+        ds = self._displays()
+        x0, y0 = min(d[0] for d in ds), min(d[1] for d in ds)
+        return x0, y0, max(d[0] + d[2] for d in ds) - x0, max(d[1] + d[3] for d in ds) - y0
+
+    def screenshot(self) -> Image.Image:
+        self._need("screen_recording")
+        x0, y0, w, h = self.extent()
+        canvas = Image.new("RGB", (w, h))
+        with tempfile.TemporaryDirectory(prefix="clud-shot-") as tmp:
+            for i, (x, y, dw, dh) in enumerate(self._displays()):
+                f = os.path.join(tmp, f"{i}.png")
+                r = subprocess.run(["/usr/sbin/screencapture", "-x", "-t", "png", f"-R{x},{y},{dw},{dh}", f],
+                                   capture_output=True, text=True, timeout=30)
+                if not os.path.exists(f):
+                    raise RuntimeError(f"screencapture failed: {(r.stderr or r.stdout).strip()}")
+                with Image.open(f) as img:
+                    # Retina screens capture at 2x: bring it to points, like the mouse uses
+                    img = img.convert("RGB")
+                    if img.size != (dw, dh):
+                        img = img.resize((dw, dh), Image.Resampling.LANCZOS)
+                    canvas.paste(img, (x - x0, y - y0))
+        return canvas
+
+    # input
+    def _post(self, ev) -> None:
+        if not ev:
+            raise RuntimeError("couldn't create the input event")
+        self.cg.CGEventPost(HID_TAP, ev)
+        self.cf.CFRelease(ev)
+
+    def _mouse(self, kind: int, x: float, y: float, button: int, clicks: int = 0) -> None:
+        ev = self.cg.CGEventCreateMouseEvent(self.src, kind, CGPoint(x, y), button)
+        if clicks:
+            self.cg.CGEventSetIntegerValueField(ev, CLICK_STATE, clicks)
+        self._post(ev)
+
+    def pointer_position(self):
+        ev = self.cg.CGEventCreate(None)
+        p = self.cg.CGEventGetLocation(ev)
+        self.cf.CFRelease(ev)
+        return round(p.x), round(p.y)
+
+    def move(self, x: int, y: int) -> None:
+        self._need("accessibility")
+        if self.held:
+            _, _, dragged, code = MAC_BUTTONS[self.held]
+            self._mouse(dragged, x, y, code)
+        else:
+            self._mouse(MAC_MOVED, x, y, 0)
+        time.sleep(0.01)
+
+    def button(self, button: str, pressed: bool) -> None:
+        self._need("accessibility")
+        down, up, _, code = MAC_BUTTONS[button]
+        x, y = self.pointer_position()
+        if pressed:
+            # macOS counts double-clicks from a field on the event, not from timing
+            t, b, lx, ly, n = self.last_click
+            n = n + 1 if b == button and time.monotonic() - t < 0.5 and abs(x - lx) + abs(y - ly) < 5 else 1
+            self.last_click = (time.monotonic(), button, x, y, n)
+            self.held = button
+        self._mouse(down if pressed else up, x, y, code, self.last_click[4])
+        if not pressed:
+            self.held = None
+
+    def scroll(self, dx: int, dy: int) -> None:
+        self._need("accessibility")
+        for _ in range(max(abs(dx), abs(dy))):
+            # Positive is up / left; three lines a wheel step, like other systems
+            wy = -3 if dy > 0 else 3 if dy < 0 else 0
+            wx = -3 if dx > 0 else 3 if dx < 0 else 0
+            dy, dx = dy - (dy > 0) + (dy < 0), dx - (dx > 0) + (dx < 0)
+            self._post(self.cg.CGEventCreateScrollWheelEvent2(self.src, 1, 2, wy, wx, 0))
+            time.sleep(0.01)
+
+    def _key(self, code: int, down: bool, flags: int, text: str | None = None) -> None:
+        ev = self.cg.CGEventCreateKeyboardEvent(self.src, code, down)
+        self.cg.CGEventSetFlags(ev, flags)
+        if text is not None:
+            raw = text.encode("utf-16-le")
+            self.cg.CGEventKeyboardSetUnicodeString(ev, len(raw) // 2, raw)
+        self._post(ev)
+
+    @staticmethod
+    def _keycode(sym: str) -> tuple[int, int]:
+        """(keycode, extra flags) for a keysym name from parse_combo."""
+        if sym in MAC_KEYCODES:
+            return MAC_KEYCODES[sym], 0
+        ch = sym if len(sym) == 1 else None
+        if sym[:1] == "U" and len(sym) > 1:
+            try:
+                ch = chr(int(sym[1:], 16))
+            except ValueError:
+                pass
+        if ch and ch.lower() in MAC_CHAR_CODES:
+            return MAC_CHAR_CODES[ch.lower()], MAC_FLAGS["Shift_L"] if ch != ch.lower() else 0
+        if ch and ch in MAC_SHIFTED:
+            return MAC_CHAR_CODES[MAC_SHIFTED[ch]], MAC_FLAGS["Shift_L"]
+        raise ValueError(f"unknown key {sym!r} (macOS media keys aren't supported; use osascript)")
+
+    def combo(self, combo: str) -> None:
+        self._need("accessibility")
+        mods, _, sym = parse_combo(combo)
+        code, extra = self._keycode(sym)
+        flags = 0
+        for m in mods:
+            flags |= MAC_FLAGS[m]
+            self._key(MAC_KEYCODES[m], True, flags)
+        self._key(code, True, flags | extra)
+        self._key(code, False, flags | extra)
+        for m in reversed(mods):
+            flags &= ~MAC_FLAGS[m]
+            self._key(MAC_KEYCODES[m], False, flags)
+
+    def type_text(self, text: str) -> None:
+        self._need("accessibility")
+        for ch in text:
+            if ch in "\n\t":
+                code = MAC_KEYCODES["Return" if ch == "\n" else "Tab"]
+                self._key(code, True, 0)
+                self._key(code, False, 0)
+            else:
+                # Any character, whatever the keyboard layout: the event carries the text
+                self._key(0, True, 0, ch)
+                self._key(0, False, 0, ch)
+            time.sleep(0.008)
+
 
 # --- Screenshot-only fallback (GNOME / KDE on Wayland) --------------------------------------
 
@@ -644,6 +907,8 @@ class ScreenshotOnlyBackend:
 
 
 def pick_backend():
+    if sys.platform == "darwin":
+        return MacBackend()
     errors = []
     if os.environ.get("WAYLAND_DISPLAY") or os.path.exists(
             os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/nonexistent"), "wayland-0")):
@@ -700,6 +965,7 @@ class Desktop:
 
 
 desktop = Desktop()
+MAC = sys.platform == "darwin"
 
 TOOLS = [
     {"name": "Screenshot", "description":
@@ -732,14 +998,18 @@ TOOLS = [
          "text": {"type": "string"},
          "press_enter": {"type": "boolean", "default": False}}, "required": ["text"]}},
     {"name": "Shortcut", "description":
-        "Press a key or key combination, e.g. 'enter', 'esc', 'ctrl+c', 'alt+f4', 'ctrl+alt+t', "
-        "'super' (opens the menu on many desktops), 'F5'. Several separated by spaces: 'down down enter'.",
+        ("Press a key or key combination, e.g. 'enter', 'esc', 'cmd+c', 'cmd+q', 'cmd+tab', "
+         "'cmd+space' (Spotlight: type an app's name, then enter), 'cmd+shift+g', 'F5'. "
+         if MAC else
+         "Press a key or key combination, e.g. 'enter', 'esc', 'ctrl+c', 'alt+f4', 'ctrl+alt+t', "
+         "'super' (opens the menu on many desktops), 'F5'. ") +
+        "Several separated by spaces: 'down down enter'.",
      "inputSchema": {"type": "object", "properties": {"keys": {"type": "string"}}, "required": ["keys"]}},
     {"name": "Wait", "description": "Wait a number of seconds (for an app to open or a page to load).",
      "inputSchema": {"type": "object", "properties": {"seconds": {"type": "number"}}, "required": ["seconds"]}},
     {"name": "Status", "description":
-        "What this server can do on this desktop: backend (wayland / x11 / screenshot-only), "
-        "screen size, and anything that isn't supported.",
+        "What this server can do on this desktop: backend (wayland / x11 / screenshot-only / macos), "
+        "screen size, and anything that isn't supported or allowed.",
      "inputSchema": {"type": "object", "properties": {}}},
 ]
 
@@ -765,6 +1035,8 @@ def call_tool(name: str, a: dict) -> list[dict]:
             info["unsupported"] = [k for k, v in b.missing.items() if v]
         if isinstance(b, ScreenshotOnlyBackend):
             info["limits"] = b.reason
+        if isinstance(b, MacBackend):
+            info["permissions"] = {**b.permissions(), "granted_to": _mac_app()}
         return [text(json.dumps(info, indent=2))]
     if name == "Wait":
         time.sleep(max(0.0, min(float(a.get("seconds", 1)), 60.0)))
@@ -817,7 +1089,8 @@ def handle(msg: dict) -> dict | None:
         version = msg.get("params", {}).get("protocolVersion", "2025-06-18")
         result = {"protocolVersion": version, "capabilities": {"tools": {}},
                   "serverInfo": {"name": "clud-desktop", "version": "1.0"},
-                  "instructions": "Computer use for the Linux desktop CLUD is plugged into. "
+                  "instructions": f"Computer use for the {'macOS' if sys.platform == 'darwin' else 'Linux'} "
+                                  "desktop CLUD is plugged into. "
                                   "Take a Screenshot first; coordinates are screenshot pixels."}
     elif method == "tools/list":
         result = {"tools": TOOLS}

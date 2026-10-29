@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" width="1200" height="600" role="img" aria-labelledby="t d">
   <title id="t">How CLUD works: create once, carry it, run anywhere</title>
-  <desc id="d">Run the CLUD Installer on Windows, macOS or Linux and pick a USB drive. The stick then holds Claude Code and/or omp for Windows and Linux, Python with computer use, and your logins. Plug it into any Windows PC, Linux PC or Raspberry Pi and double-click CLUD: the agent works on that computer through the shell and the mouse and keyboard, and nothing is installed.</desc>
+  <desc id="d">Run the CLUD Installer on Windows, macOS or Linux and pick a USB drive. The stick then holds Claude Code and/or omp for Windows, Linux and macOS, Python with computer use, and your logins. Plug it into any Windows PC, Linux PC, Mac or Raspberry Pi and double-click CLUD: the agent works on that computer through the shell and the mouse and keyboard, and nothing is installed.</desc>
   <defs>
     <style>
       .sans { font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; }
@@ -42,7 +42,7 @@
 
   <!-- title -->
   <text x="600" y="62" text-anchor="middle" class="sans" font-size="34" font-weight="800" fill="#F5F4EF">Create once. <tspan fill="#D97757">Run anywhere.</tspan></text>
-  <text x="600" y="92" text-anchor="middle" class="sans" font-size="16" fill="#8F8C84">Claude Code or omp on a USB stick, built from any OS, run on Windows, Linux and Raspberry Pi</text>
+  <text x="600" y="92" text-anchor="middle" class="sans" font-size="16" fill="#8F8C84">Claude Code or omp on a USB stick, built from any OS, run on Windows, Linux, macOS and Raspberry Pi</text>
 
   <!-- ============ 1. CREATE ONCE ============ -->
   <rect x="40" y="124" width="336" height="436" rx="20" class="card"/>
@@ -141,7 +141,7 @@
   </g>
   <text x="1132" y="430" text-anchor="end" class="sans" font-size="12.5" fill="#8F8C84">shell · mouse · keyboard</text>
 
-  <text x="852" y="470" class="sans cap">On Windows, Linux or a Pi, the agent works</text>
+  <text x="852" y="470" class="sans cap">On a PC, a Mac or a Pi, the agent works</text>
   <text x="852" y="492" class="sans cap">on that machine through the shell and</text>
   <text x="852" y="514" class="sans cap">the screen. Nothing gets installed.</text>
 </svg>

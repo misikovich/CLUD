@@ -11,13 +11,15 @@ stick can be built from Windows, macOS or Linux alike:
     library and the pure-Python packages are packed into zips it imports from (see
     _pack_python), as a stick takes far longer to write thousands of small files than a
     few big ones.
-  - Computer use: Windows-MCP on Windows; on Linux CLUD's own mcp/clud_desktop.py, whose
-    dependencies (Pillow, python-xlib) go into that platform's Python. Installed with uv,
-    targeting the stick's platform rather than the one the installer runs on.
+  - Computer use: Windows-MCP on Windows; on Linux and macOS CLUD's own
+    mcp/clud_desktop.py, whose dependencies (Pillow, and python-xlib on Linux) go into that
+    platform's Python. Installed with uv, targeting the stick's platform rather than the one
+    the installer runs on.
 No Git for Windows: without it Claude Code uses its PowerShell tool for commands.
 
-Linux binaries are named *.exe on purpose: Linux mounts FAT32 sticks with "showexec",
-which only lets files ending in .exe/.com/.bat run.
+Linux and macOS binaries are named *.exe on purpose: Linux mounts FAT32 sticks with
+"showexec", which only lets files ending in .exe/.com/.bat run. macOS doesn't mind, and one
+name keeps CLUD.sh the same for both.
 """
 
 from __future__ import annotations
@@ -70,6 +72,8 @@ PLATFORMS = (
              100 * MB, {"claude": 240 * MB, "omp": 360 * MB}),
     Platform("linux-x64", "Linux x64 (64-bit PC: Ubuntu, Debian, Mint, Fedora, ...)", ("linux-x64",),
              100 * MB, {"claude": 250 * MB, "omp": 400 * MB}),
+    Platform("macos-arm64", "macOS (Apple Silicon Mac: M1 and later)", ("macos-arm64",),
+             50 * MB, {"claude": 270 * MB, "omp": 310 * MB}),
 )
 PLATFORM_KEYS = tuple(p.key for p in PLATFORMS)
 
@@ -113,7 +117,7 @@ HIDDEN = MANAGED_DIRS + ("mcp", "CLUD.cmd", "CLUD.sh", "omp.yml", "autorun.inf",
 # libraries, pip, and precompiled caches (_pack_python compiles its own)
 PY_SKIP = ("tcl/", "include/", "libs/", "Lib/idlelib/", "Lib/turtledemo/", "Lib/tkinter/",
            "Lib/ensurepip/", "Lib/site-packages/", "Lib/__pycache__/")
-# Linux Python: also terminfo (~2,900 files), and every bin/ entry but the interpreter
+# Linux and macOS Python: also terminfo (~2,900 files), and every bin/ entry but the interpreter
 # itself (the rest are symlinks, which FAT would turn into 22 MB copies)
 PY_LINUX_SKIP = ("include/", "share/", "lib/tcl", "lib/tk", "lib/itcl", "lib/thread", "lib/libtcl",
                  "lib/libpython", "lib/pkgconfig/", "lib/python3.13/idlelib/", "lib/python3.13/turtledemo/",
@@ -269,11 +273,13 @@ def _get_json(url: str):
 
 
 # npm package suffix and python-build-standalone target per platform
-NPM_PLATFORM = {"windows": "win32-x64", "linux-arm64": "linux-arm64", "linux-x64": "linux-x64"}
+NPM_PLATFORM = {"windows": "win32-x64", "linux-arm64": "linux-arm64", "linux-x64": "linux-x64",
+                "macos-arm64": "darwin-arm64"}
 PY_TARGET = {"windows": "x86_64-pc-windows-msvc", "linux-arm64": "aarch64-unknown-linux-gnu",
-             "linux-x64": "x86_64-unknown-linux-gnu"}
+             "linux-x64": "x86_64-unknown-linux-gnu", "macos-arm64": "aarch64-apple-darwin"}
 # omp release binary per platform (the glibc Linux builds, not the musl ones)
-OMP_ASSET = {"windows": "omp-windows-x64.exe", "linux-arm64": "omp-linux-arm64", "linux-x64": "omp-linux-x64"}
+OMP_ASSET = {"windows": "omp-windows-x64.exe", "linux-arm64": "omp-linux-arm64", "linux-x64": "omp-linux-x64",
+             "macos-arm64": "omp-darwin-arm64"}
 OMP_REPO = "can1357/oh-my-pi"
 
 
@@ -833,13 +839,14 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
 
     for key in platforms:
         a = archives[key]
+        name = next(p.title.split(" (")[0] for p in PLATFORMS if p.key == key)
         bin_dir = stage / ("app" if key == "windows" else key)
         if "claude" in agents:
             next_step()
-            name = "claude.exe" if key == "windows" else "claude"
-            _extract_tar(a["claude"], bin_dir, report, strip=1, only=name)
-            if not (bin_dir / name).exists():
-                raise RuntimeError(f"{name} was not in the Claude Code package for {key}")
+            exe = "claude.exe" if key == "windows" else "claude"
+            _extract_tar(a["claude"], bin_dir, report, strip=1, only=exe)
+            if not (bin_dir / exe).exists():
+                raise RuntimeError(f"{exe} was not in the Claude Code package for {key}")
             if key != "windows":
                 (bin_dir / "claude").rename(bin_dir / "claude.exe")
                 _make_executable(bin_dir / "claude.exe")
@@ -856,8 +863,10 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
             report.log("Python + Windows-MCP installed")
         else:
             next_step()
+            # macOS: the server drives the desktop through CoreGraphics with ctypes
+            packages = ["pillow"] if key.startswith("macos") else ["pillow", "python-xlib"]
             _install_python(a["python"], bin_dir / "py", "lib/python3.13", PY_LINUX_SKIP, (LINUX_PY_BIN,),
-                            ["pillow", "python-xlib"], PY_TARGET[key], "computer use for Linux", report)
+                            packages, PY_TARGET[key], f"computer use for {name}", report)
             _make_executable(bin_dir / "py" / "bin" / "python3.exe")
             report.log(f"Python + computer use for {key} installed")
 
@@ -914,6 +923,8 @@ def install(target: Path, src: Sources, rename: bool, report: Reporter,
             notes.append(f"CLAUDE.md was updated; your previous one is in {backup}")
         else:
             _copy_file(path, dst)
+    # Finder only runs a .command that's executable (always so on FAT/exFAT, not in a folder)
+    _make_executable(target / "CLUD.command")
     (target / "work").mkdir(exist_ok=True)
     _unregister_old_mcp(target / "config" / ".claude.json")
     version_file = target / "clud-version.json"

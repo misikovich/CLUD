@@ -9,6 +9,10 @@ Linux:   double-click CLUD (CLUD.desktop) in the file manager. On Raspberry
              sh /media/$USER/CLUD/CLUD.sh [folder]
          Works on 64-bit Linux: Raspberry Pi 3/4/5 with 64-bit Raspberry Pi
          OS, and x64 PCs (Ubuntu, Debian, Mint, Fedora, ...).
+macOS:   double-click CLUD.command (opens in Terminal). Apple Silicon Macs
+         only. For screenshots, mouse and keyboard, allow Terminal under
+         System Settings > Privacy & Security > Screen & System Audio
+         Recording and Accessibility; the agent tells you when it's needed.
 Agents:  with both Claude Code and omp on the stick, CLUD asks which to
          start (set CLUD_AGENT=claude or omp to skip the question). omp works
          with many model providers; its logins and settings are in
@@ -19,7 +23,7 @@ Careful: CLUD runs with --dangerously-skip-permissions (omp: --auto-approve).
 Brief:   config\CLAUDE.md tells Claude it runs off this stick, that its job
          is the host PC, and to prefer computer use. Edit it to taste.
 Login:   first run asks you to /login in the browser. The login is saved in
-         \config on this stick (shared by Windows and Linux), so treat the
+         \config on this stick (shared by Windows, Linux and macOS), so treat the
          stick like a key: if you lose it, sign out of the session at
          claude.ai settings.
 Update:  run the CLUD Installer again and pick this drive. Your login,
@@ -30,7 +34,9 @@ Layout:  app\          Claude Code and/or omp for Windows (claude.exe, omp.exe)
          linux-arm64\  Claude Code / omp + Python for 64-bit ARM Linux (Pi)
          linux-x64\    Claude Code / omp + Python for 64-bit x86 Linux
                        (Linux programs end in .exe so FAT32 lets them run)
-         mcp\          computer-use starters; clud_desktop.py is the Linux one
+         macos-arm64\  Claude Code / omp + Python for Apple Silicon Macs
+         mcp\          computer-use starters; clud_desktop.py is the Linux
+                       and macOS one
          config\       your settings, history, memory, login
          work\         notes and scratch files
 

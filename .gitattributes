@@ -11,6 +11,7 @@
 *.py  text eol=lf
 *.md  text eol=lf
 *.desktop text eol=lf
+*.command text eol=lf
 
 *.ico binary
 *.exe binary
