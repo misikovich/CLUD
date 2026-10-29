@@ -13,8 +13,8 @@ Without arguments it opens the TUI. For scripting:
     --list                 print the drives and exit
     --target PATH --yes    install to PATH without the TUI
     --no-rename            don't rename the drive to CLUD
-    --platforms LIST       comma-separated: windows, linux-arm64, linux-x64, or linux for
-                           both Linux builds (default: all)
+    --platforms LIST       comma-separated: windows, linux-arm64, linux-x64, macos-arm64, or
+                           linux for both Linux builds, macos for macos-arm64 (default: all)
     --agents LIST          comma-separated: claude, omp (default: claude)
     --all                  include non-removable drives
 """
@@ -172,9 +172,9 @@ def run_cli(args: argparse.Namespace) -> int:
     platforms = []
     for name in args.platforms.split(","):
         name = name.strip().lower()
-        keys = [k for k in core.PLATFORM_KEYS if k.startswith("linux")] if name == "linux" else [name]
-        if not all(k in core.PLATFORM_KEYS for k in keys):
-            print(f"Unknown platform {name!r}. Choose from: {', '.join(core.PLATFORM_KEYS)}, linux")
+        keys = [k for k in core.PLATFORM_KEYS if k.startswith(name + "-")] if name in ("linux", "macos") else [name]
+        if not keys or not all(k in core.PLATFORM_KEYS for k in keys):
+            print(f"Unknown platform {name!r}. Choose from: {', '.join(core.PLATFORM_KEYS)}, linux, macos")
             return 1
         platforms += keys
     agents = [name.strip().lower() for name in args.agents.split(",")]
@@ -636,7 +636,8 @@ def main() -> int:
     p.add_argument("--no-rename", action="store_true", help=f"don't rename the drive to {core.LABEL}")
     p.add_argument("--all", action="store_true", help="include non-removable drives")
     p.add_argument("--platforms", default=",".join(core.PLATFORM_KEYS),
-                   help="comma-separated: windows, linux-arm64, linux-x64, or linux (default: all)")
+                   help="comma-separated: windows, linux-arm64, linux-x64, macos-arm64, or linux / macos "
+                        "(default: all)")
     p.add_argument("--agents", default=",".join(core.DEFAULT_AGENTS),
                    help="comma-separated: claude, omp (default: claude)")
     args = p.parse_args()

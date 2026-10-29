@@ -5,7 +5,7 @@
 
 **A portable AI agent on a USB stick: [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code)
 or [omp](https://github.com/can1357/oh-my-pi) (any model provider), or both.** Build the stick
-once from Windows, macOS or Linux. Plug it into any Windows PC, Linux PC or Raspberry Pi,
+once from Windows, macOS or Linux. Plug it into any Windows PC, Linux PC, Mac or Raspberry Pi,
 double-click `CLUD`, and the agent works on that computer through the shell, mouse, keyboard
 and screen. Nothing is installed on the host; your logins, settings and memory travel with
 the stick.
@@ -18,10 +18,10 @@ the stick.
 2. **Start the installer:** `CLUD-Installer.bat` on Windows, `./CLUD-Installer.sh` on
    macOS/Linux.
 3. **Pick the drive, tick platforms and agents, press Install.** Windows alone is ~430 MB,
-   each Linux build ~340 MB; omp adds ~250 MB per platform.
+   each Linux build ~340 MB, macOS ~320 MB; omp adds ~250 MB per platform.
 4. **Plug the stick in and start CLUD:** `CLUD.exe` on Windows, `CLUD` on Linux (choose
-   **Execute** on Raspberry Pi OS, or run `sh /media/$USER/CLUD/CLUD.sh`). Sign in on first
-   start. With both agents on the stick, CLUD asks which to start.
+   **Execute** on Raspberry Pi OS, or run `sh /media/$USER/CLUD/CLUD.sh`), `CLUD.command`
+   on a Mac. Sign in on first start. With both agents on the stick, CLUD asks which to start.
 
 ![The CLUD Installer drive picker](docs/installer.png)
 
@@ -51,9 +51,10 @@ folder are deleted on exit unless that folder already existed.
 |---|---|
 | `app\`, `py\` | Windows: Claude Code / omp, Python 3.13 with [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) |
 | `linux-x64/`, `linux-arm64/` | Linux and Raspberry Pi: the same, with CLUD's own computer-use server |
+| `macos-arm64/` | macOS on Apple Silicon: the same, with the same computer-use server |
 | `config\` | Logins, settings, history, memory, and `CLAUDE.md`, the agent's brief. Edit it to change how CLUD behaves |
 | `work\` | The agent's notes and scratch files |
-| `CLUD.exe`, `CLUD.desktop` | Launchers |
+| `CLUD.exe`, `CLUD.desktop`, `CLUD.command` | Launchers |
 
 ## Linux and Raspberry Pi
 
@@ -70,6 +71,21 @@ no 32-bit build).
 The Linux programs end in `.exe` so they may run from FAT32. If the stick is mounted
 `noexec`, `CLUD.sh` copies the Linux build to `~/.cache/clud/` once; that's the only thing
 CLUD writes to the host. Pass a folder to `CLUD.sh` to start there instead of your home.
+
+## macOS
+
+Runs on Apple Silicon Macs (M1 and later); Intel Macs aren't supported. Double-click
+`CLUD.command` and it opens in Terminal.
+
+For screenshots and the mouse and keyboard, macOS asks once per Mac to allow **Terminal**
+under System Settings → Privacy & Security → **Screen & System Audio Recording** and
+**Accessibility**. Until then the agent still works through the shell, and its tools tell
+it how to walk you through allowing them. This setting stays on that Mac and applies to
+everything run in Terminal, so turn it off there afterwards if the Mac isn't yours.
+
+Claude Code on a Mac moves its login into the Mac's Keychain. `CLUD.sh` moves it back onto
+the stick when Claude Code exits, so the login travels with the stick and doesn't stay on
+the Mac. NTFS drives are read-only on macOS, so use exFAT or FAT32.
 
 ## ⚠️ No permission prompts
 
@@ -92,7 +108,7 @@ complete, and your logins, settings and `work\` are kept. An edited `CLAUDE.md` 
 ```
 CLUD-Installer.bat --list [--all]                   # list drives (--all: fixed drives too)
 CLUD-Installer.bat --target E:\ --yes               # install without the TUI
-  --platforms windows,linux-arm64,linux-x64|linux   # default: all
+  --platforms windows,linux-arm64,linux-x64,macos-arm64|linux|macos   # default: all
   --agents claude,omp                               # default: claude
   --no-rename                                       # keep the drive's label
 ```
@@ -103,18 +119,19 @@ forces the plain-text TUI look on or off.
 
 ## Requirements
 
-- **Run:** 64-bit Windows 10/11, or 64-bit Linux (x64 or ARM64, glibc).
+- **Run:** 64-bit Windows 10/11, 64-bit Linux (x64 or ARM64, glibc), or macOS on Apple
+  Silicon.
 - **Build:** Windows, macOS or 64-bit Linux with internet.
-- **Drive:** 1 GB free or more (2 GB for everything); FAT32, exFAT or NTFS. On Linux, label
-  it `CLUD` yourself (`fatlabel`, `exfatlabel`).
+- **Drive:** 1 GB free or more (3 GB for everything); FAT32, exFAT or NTFS (not for Macs:
+  macOS can't write to NTFS). On Linux, label it `CLUD` yourself (`fatlabel`, `exfatlabel`).
 
 Computer use can't act on a locked screen or Windows UAC prompts; the agent asks you to
 click those.
 
 > **Status:** tested on Windows, Raspberry Pi OS 64-bit in QEMU
-> (`tests/pi-vm.sh`, including desktop use) and x64 Linux (Claude Code, X11 under Xvfb).
-> The installer is untested on macOS. omp is tested on x64 Linux and Windows 11, not yet on
-> a Pi.
+> (`tests/pi-vm.sh`, including desktop use), x64 Linux (Claude Code, X11 under Xvfb) and
+> macOS on Apple Silicon (installer, both agents, desktop use, from an exFAT stick). omp is
+> tested on x64 Linux, Windows 11 and macOS, not yet on a Pi.
 
 ## Repo layout
 

@@ -2,7 +2,7 @@
 
 ## Where you are
 - You are not installed on this machine (the **host**). You run from a removable drive whose root is in `CLUD_HOME`.
-- The host is likely a different machine every session, Windows or Linux. Before acting,
+- The host is likely a different machine every session: Windows, Linux or macOS. Before acting,
   check what you're on (OS, `hostname`, `whoami`, what's installed); assume nothing from
   earlier sessions.
 - Portable tools available on Windows: Python 3.13. Claude Code's shell is PowerShell.
@@ -13,15 +13,20 @@ Do what the user needs done **on the host**: setup, fixes, installing and config
 software, files, hardware and network diagnostics, operating its apps.
 
 ## How to act
-- Prefer the computer-use tools (`windows-mcp` or `linux-desktop`) for GUI apps,
+- Prefer the computer-use tools (`windows-mcp`, `linux-desktop` or `mac-desktop`) for GUI apps,
   settings, installers and dialogs: screenshot, act, screenshot again to confirm.
 - Use the shell for bulk file work, logs, scripting, diagnostics and package management.
 - Linux: start GUI apps from the shell in the background
   (`nohup chromium >/dev/null 2>&1 &`).
+- macOS: start apps with `open -a "App Name"`; shortcuts use `cmd`, not `ctrl`.
+  Homebrew may not be installed.
 - Limits:
   - Windows: locked screens and UAC prompts can't be clicked; ask the user.
   - Linux: on GNOME/KDE under Wayland only screenshots may work; fall back to the shell.
     Use `sudo -n` and ask the user if it needs a password.
+  - macOS: screenshots and input need the terminal app CLUD runs in (usually Terminal)
+    allowed under Screen Recording and Accessibility. The tools say which is missing and how
+    to turn it on; walk the user through it. Use `sudo -n` there too.
 - If the computer-use tools are missing or fail, say so once and use the shell.
 
 ## Leave the host clean
