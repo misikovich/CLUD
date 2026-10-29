@@ -45,6 +45,86 @@ def files_text(done: int, total: int) -> str:
     return f"{done:,} / {total:,} files copied, {total - done:,} left"
 
 
+# The install screen: a monitor showing the log, with the stick plugged into its side.
+# Data pulses run down the cable while files go to the stick.
+STICK = (
+    "╭──────────────╮",
+    "┤   CLUD   @   │",
+    "╰──────────────╯",
+)
+CABLE = 6
+SIMPLE_GLYPHS = str.maketrans("╭╮╰╯┌┐└┘├┤─│■•", "++++++++++-|#>")
+
+
+def draw_rig(lines: list[str], width: int, height: int, writing: bool, tick: int,
+             label: str = "", simple: bool = False, ready: bool = False):
+    """The monitor-and-stick picture as Rich Text, sized to width x height cells."""
+    from rich.text import Text
+
+    stick_w = len(STICK[0])
+    mon_w = max(20, min(width - CABLE - stick_w, 80))
+    inner = mon_w - 8
+    rows = max(3, height - 4)
+    shown = [line[:inner - 1] + "…" if len(line) > inner else line for line in lines[-rows:]]
+    shown = [""] * (rows - len(shown)) + shown
+    mid = 2 + rows // 2  # the row the cable leaves the monitor at
+    stick_top = mid - 1
+    frame, dim, accent = "grey50", "grey35", ACCENT
+
+    out = Text()
+    for y in range(rows + 4):
+        row = Text()
+        if y == 0:
+            row.append("╭" + "─" * (mon_w - 2) + "╮", frame)
+        elif y == 1:
+            row.append("│" + " " * (mon_w - 2) + "│", frame)
+        elif y < rows + 2:
+            i = y - 2
+            row.append("│   ", frame)
+            row.append(shown[i].ljust(inner), "bold" if i == rows - 1 else "")
+            row.append("   " + ("├" if y == mid else "│"), frame)
+        elif y == rows + 2:
+            row.append("│" + " " * (mon_w - 2) + "│", frame)
+        else:
+            row.append("╰" + "─" * (mon_w - 2) + "╯", frame)
+        row.pad_right(mon_w - row.cell_len)
+
+        if y == mid:
+            for x in range(CABLE):
+                if writing and (x - tick) % 3 == 0:
+                    row.append("•", accent)
+                else:
+                    row.append("─", frame)
+        elif y == stick_top + len(STICK):
+            row.append(" " * CABLE + label[:stick_w].center(stick_w), "dim")
+        else:
+            row.append(" " * CABLE)
+        k = y - stick_top
+        if 0 <= k < len(STICK):
+            part = STICK[k]
+            if "@" in part:
+                left, right = part.split("@")
+                name = left.index("CLUD")
+                row.append(left[:name], frame)
+                row.append("CLUD", f"bold {accent}")
+                row.append(left[name + 4:], frame)
+                # The stick's LED: blinks orange while writing, steady green once done
+                if ready:
+                    led = "green"
+                else:
+                    led = accent if writing and tick % 2 else dim
+                row.append("■", led)
+                row.append(right, frame)
+            else:
+                row.append(part, frame)
+        if simple:
+            row.plain = row.plain.translate(SIMPLE_GLYPHS)
+        out.append(row)
+        if y < rows + 3:
+            out.append("\n")
+    return out
+
+
 # --- CLI mode ---------------------------------------------------------------------------
 
 class PrintReporter(core.Reporter):
@@ -136,21 +216,22 @@ Button, Button:focus, Button:hover, Button.-active, Button:disabled {
     border: none !important; height: 1; min-width: 12; margin-right: 2;
 }
 Checkbox, Checkbox:focus, Checkbox:hover { border: none !important; padding: 0 1; }
-Checkbox:focus { text-style: reverse; }
-#log { border: solid $panel; }
-FooterKey.-command-palette { border-left: outer $foreground 20%; }
+Checkbox:focus > .toggle--label { text-style: reverse; }
+#bar { margin-bottom: 0; }
+#quit { margin-top: 2; }
 """
 
 
 def run_tui(show_all: bool) -> int:
-    from textual import work
+    from textual import events, work
     from textual.app import App, ComposeResult
     from rich.text import Text
     from textual.binding import Binding
     from textual.content import Content
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.screen import Screen
-    from textual.widgets import Button, Checkbox, DataTable, Footer, Header, ProgressBar, RichLog, Static
+    from textual.widget import Widget
+    from textual.widgets import Button, Checkbox, DataTable, Footer, Header, ProgressBar, Static
 
     simple = legacy_console()
     if simple:
@@ -160,7 +241,15 @@ def run_tui(show_all: bool) -> int:
         BarRenderable.BAR = BarRenderable.HALF_BAR_LEFT = BarRenderable.HALF_BAR_RIGHT = "─"
         ScrollBarRender.VERTICAL_BARS = [" "] * 8
         ScrollBarRender.HORIZONTAL_BARS = [" "] * 8
-    header_icon = "C" if simple else None
+    # Checkboxes are a plain square: dark when off, orange when on (colors in the app CSS)
+    Checkbox.BUTTON_LEFT, Checkbox.BUTTON_RIGHT = "", " "
+    Checkbox.BUTTON_INNER = "■"
+
+    class FixedHeader(Header):
+        """Header that stays one line: clicking it doesn't expand it."""
+
+        def _on_click(self, event: events.Click) -> None:
+            event.prevent_default()
 
     class DriveScreen(Screen):
         BINDINGS = [
@@ -176,9 +265,9 @@ def run_tui(show_all: bool) -> int:
             self.drives: dict[str, core.Drive] = {}
 
         def compose(self) -> ComposeResult:
-            yield Header(icon=header_icon)
+            yield FixedHeader()
             yield Static(f"[{ACCENT}]{BANNER}[/]", id="banner")
-            yield Static("Portable Claude Code for Windows PCs and Linux, Raspberry Pi included. "
+            yield Static("Portable Agent for Your Stick. "
                          "Pick the drive to install it on.",
                          id="tagline")
             yield DataTable(id="drives", cursor_type="row", zebra_stripes=True)
@@ -213,7 +302,7 @@ def run_tui(show_all: bool) -> int:
                             "or press [b]a[/] to show every drive.")
             else:
                 hint.update(f"Needs about {core.human(core.NEEDED_BYTES)} free for every platform. "
-                            "Drives that already have CLUD get updated; your login and settings are kept.")
+                            "Drives that already have CLUD get updated.")
             table.focus()
 
         def action_toggle_all(self) -> None:
@@ -255,7 +344,7 @@ def run_tui(show_all: bool) -> int:
         def compose(self) -> ComposeResult:
             d = self.drive
             action = "Update CLUD on" if d.has_clud else "Install CLUD on"
-            yield Header(icon=header_icon)
+            yield FixedHeader()
             with VerticalScroll(id="confirm-box"):
                 yield Static(Content.from_markup("[b]$action $mount[/b]  $label", action=action, mount=str(d.mount),
                                                  label=d.label), id="title")
@@ -263,15 +352,13 @@ def run_tui(show_all: bool) -> int:
                 yield Static("Looking up the latest versions…", id="versions")
                 yield Static(
                     "• Other files on the drive are left alone.\n"
-                    "• Your CLUD login, settings, history and work\\ folder are kept.\n"
-                    "• CLUD runs with [b]--dangerously-skip-permissions[/b] (omp: [b]--auto-approve[/b]): "
-                    "on whatever PC it's plugged into, it acts without asking.",
+                    "• Your CLUD login, settings and history are kept.\n",
                     id="notes",
                 )
-                yield Static("Platforms to put on the stick:", classes="muted")
+                yield Static("Platforms to put on the drive:\n", classes="muted")
                 for p in core.PLATFORMS:
                     yield Checkbox(p.title, value=True, id=f"plat-{p.key}", classes="platform")
-                yield Static("Agents (with both, CLUD asks which to start):", classes="muted pick")
+                yield Static("Agents:\n", classes="muted pick")
                 # Updates keep the stick's agents unless changed here
                 agents = d.clud_agents if d.has_clud else core.DEFAULT_AGENTS
                 for a in core.AGENTS:
@@ -299,7 +386,7 @@ def run_tui(show_all: bool) -> int:
             need = core.needed_bytes(self.platforms(), self.agents())
             # An update frees the old version's space too, but only after building the new one
             ok = self.drive.free >= need
-            text = f"Needs about {core.human(need)} free; the drive has {core.human(self.drive.free)}."
+            text = f"\nNeeds about {core.human(need)} free; the drive has {core.human(self.drive.free)}."
             self.query_one("#space", Static).update(text if ok else f"[red]{text}[/]")
             self.query_one("#go", Button).disabled = not (ok and self.sources and need and self.agents())
 
@@ -365,6 +452,37 @@ def run_tui(show_all: bool) -> int:
         def log(self, message: str) -> None:
             self.screen.app.call_from_thread(self.screen.write_log, message)
 
+        def writing(self, on_stick: bool) -> None:
+            self.screen.app.call_from_thread(self.screen.set_writing, on_stick)
+
+    class Rig(Widget):
+        """The monitor showing the log, with the stick plugged into it."""
+
+        def __init__(self, label: str, **kwargs) -> None:
+            super().__init__(**kwargs)
+            self.label = label
+            self.lines: list[str] = []
+            self.writing = False
+            self.ready = False
+            self.tick = 0
+
+        def on_mount(self) -> None:
+            self.set_interval(0.6, self.animate)
+
+        def animate(self) -> None:
+            if self.writing:
+                self.tick -= 1
+                self.refresh()
+
+        def write(self, message: str) -> None:
+            self.lines += str(message).splitlines() or [""]
+            del self.lines[:-200]
+            self.refresh()
+
+        def render(self):
+            return draw_rig(self.lines, self.size.width, self.size.height, self.writing, self.tick,
+                            self.label, simple, self.ready)
+
     class InstallScreen(Screen):
         BINDINGS = [Binding("q", "quit_if_done", "Quit")]
 
@@ -376,39 +494,50 @@ def run_tui(show_all: bool) -> int:
             self.finished = False
 
         def compose(self) -> ComposeResult:
-            yield Header(icon=header_icon)
+            yield FixedHeader()
             with Vertical(id="install-box"):
-                yield Static(Content.from_markup("Installing CLUD on [b]$mount[/b]", mount=str(self.drive.mount)),
-                             id="title")
-                yield Static("Overall", classes="muted")
-                yield ProgressBar(id="overall", show_eta=False)
-                yield Static("Starting…", id="step")
-                yield ProgressBar(id="current", show_eta=False)
-                yield Static("", id="files", classes="muted")
-                yield RichLog(id="log", wrap=True, markup=False)
-                yield Static("", id="result")
-                with Horizontal(id="buttons"):
+                yield Rig(str(self.drive.mount), id="rig")
+                with Horizontal(id="progress-row"):
+                    with Vertical(id="progress"):
+                        yield Static("", id="result")
+                        yield Static("Starting…", id="step")
+                        yield Static("", id="detail", classes="muted")
+                        yield ProgressBar(id="bar", show_eta=False)
                     yield Button("Quit", id="quit", disabled=True)
             yield Footer()
 
         def on_mount(self) -> None:
+            self.detail = ""
+            self.index, self.count = 0, len(core.steps(self.platforms, self.agents))
+            self.query_one("#bar", ProgressBar).update(total=self.count * 1000, progress=0)
             self.run_install()
 
+        def show_detail(self, text: str) -> None:
+            self.detail = text
+            self.query_one("#detail", Static).update(text)
+
         def set_step(self, index: int, total: int, title: str) -> None:
-            self.query_one("#overall", ProgressBar).update(total=total, progress=index)
-            self.query_one("#step", Static).update(f"[b]{title}[/b]")
-            self.query_one("#current", ProgressBar).update(total=None, progress=0)
-            self.query_one("#files", Static).update("")
+            self.index, self.count = index, total
+            self.query_one("#bar", ProgressBar).update(total=total * 1000, progress=index * 1000)
+            self.query_one("#step", Static).update(
+                Content.from_markup("[b]$step[/b]", step=f"{title} ({index + 1}/{total})"))
+            self.show_detail("")
 
         def set_files(self, done: int, total: int) -> None:
-            self.query_one("#files", Static).update(files_text(done, total))
-
-        def write_log(self, message: str) -> None:
-            self.query_one(RichLog).write(message)
+            self.show_detail(files_text(done, total))
 
         def set_progress(self, done: int, total: int) -> None:
-            bar = self.query_one("#current", ProgressBar)
-            bar.update(total=total or None, progress=done)
+            part = min(done / total, 1) if total else 0
+            self.query_one("#bar", ProgressBar).update(progress=(self.index + part) * 1000)
+            if total > 1 and not self.detail.endswith("left"):
+                self.show_detail(f"{core.human(done)} / {core.human(total)}")
+
+        def set_writing(self, on_stick: bool) -> None:
+            self.query_one(Rig).writing = on_stick
+            self.query_one(Rig).refresh()
+
+        def write_log(self, message: str) -> None:
+            self.query_one(Rig).write(message)
 
         @work(thread=True, exclusive=True)
         def run_install(self) -> None:
@@ -422,29 +551,26 @@ def run_tui(show_all: bool) -> int:
 
         def done(self, ok: bool, notes: list[str], trace: str) -> None:
             self.finished = True
-            log = self.query_one(RichLog)
+            self.set_writing(False)
             result = self.query_one("#result", Static)
+            step = self.query_one("#step", Static)
+            self.show_detail("")
             if ok:
-                self.query_one("#overall", ProgressBar).update(
-                    progress=len(core.steps(self.platforms, self.agents)))
-                how = []
-                if "windows" in self.platforms:
-                    how.append("on Windows, double-click [b]CLUD.exe[/b]")
-                if any(p.startswith("linux") for p in self.platforms):
-                    how.append("on Linux or a Raspberry Pi, open [b]CLUD.desktop[/b] (or run [b]sh CLUD.sh[/b])")
-                text = (f"[b {ACCENT}]CLUD is ready.[/]  Eject the drive safely and plug it in: "
-                        + "; ".join(how) + ".")
-                if len(self.agents) > 1:
-                    text += " It asks whether to start Claude Code or omp."
-                content = Content.from_markup(text)
-                for note in notes:
-                    content += Content.from_markup("\n[yellow]•[/] $note", note=note)
-                result.update(content)
+                self.query_one("#bar", ProgressBar).update(progress=self.count * 1000)
+                step.update(Content.from_markup(f"[b {ACCENT}]CLUD is ready.[/]"))
+                self.query_one(Rig).ready = True
+                self.query_one(Rig).refresh()
+                if notes:
+                    result.display = True
+                    result.update(Content("\n").join(
+                        Content.from_markup("[yellow]•[/] $note", note=note) for note in notes))
             else:
-                log.write(Text(trace, style="red"))
+                self.write_log(trace)
+                step.update(Content.from_markup("[red b]Install failed[/]"))
+                result.display = True
                 result.update(Content.from_markup(
-                    "[red b]Install failed:[/] $error\nRun the installer again to retry; "
-                    "downloads are cached so it picks up quickly.", error=notes[0]))
+                    "$error\nRun the installer again to retry; downloads are cached so it picks up quickly.",
+                    error=notes[0]))
             button = self.query_one("#quit", Button)
             button.disabled = False
             button.focus()
@@ -462,9 +588,10 @@ def run_tui(show_all: bool) -> int:
 
     class CludInstaller(App):
         TITLE = "CLUD Installer"
-        SUB_TITLE = "Claude + Chud = CLUD"
+        ENABLE_COMMAND_PALETTE = False
         CSS = f"""
         Screen {{ align-horizontal: center; }}
+        HeaderIcon, HeaderClockSpace {{ display: none; }}
         #banner {{ color: {ACCENT}; text-style: bold; width: auto; margin: 1 0 0 0; }}
         #tagline {{ width: auto; margin: 0 0 1 0; color: $text-muted; }}
         #drives {{ height: auto; max-height: 14; width: 100%; max-width: 110; }}
@@ -476,13 +603,21 @@ def run_tui(show_all: bool) -> int:
         #space {{ margin: 0 0 1 0; }}
         .pick {{ margin-top: 1; }}
         Checkbox.platform {{ border: none; height: 1; padding: 0 1; background: transparent; }}
-        Checkbox.platform:focus {{ text-style: reverse; }}
+        Checkbox.platform:focus > .toggle--label {{ text-style: reverse; }}
+        Checkbox > .toggle--button, Checkbox:focus > .toggle--button {{ color: #4a4a4a; background: transparent; }}
+        Checkbox.-on > .toggle--button, Checkbox.-on:focus > .toggle--button {{ color: {ACCENT}; }}
         #notes {{ margin: 0 0 1 0; }}
         #buttons {{ height: auto; margin-top: 1; }}
         #buttons Button {{ margin-right: 2; }}
-        #overall, #files {{ margin-bottom: 1; }}
-        #log {{ height: 1fr; border: round $panel; }}
-        #result {{ margin-top: 1; }}
+        #rig {{ height: 1fr; max-height: 22; min-height: 10; }}
+        #bar {{ width: 100%; }}
+        #bar Bar {{ width: 1fr; }}
+        #progress-row {{ dock: bottom; height: auto; }}
+        #quit {{ margin-top: 1; }}
+        #progress {{ width: 1fr; height: auto; margin-right: 2; }}
+        #result {{ height: auto; margin-bottom: 1; display: none; }}
+        #step, #detail {{ height: 1; text-wrap: nowrap; text-overflow: ellipsis; }}
+        #bar {{ margin-bottom: 1; }}
         ProgressBar Bar > .bar--bar, ProgressBar Bar > .bar--complete {{ color: {ACCENT}; }}
         """ + (SIMPLE_CSS if simple else "")
 
